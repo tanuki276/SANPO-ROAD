@@ -18,14 +18,22 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.*
-import com.google.android.gms.maps.model.LatLng
-import com.google.maps.android.compose.*
+import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.Polyline
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.*
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); setContent { SanpoRoadApp() } }
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Configuration.getInstance().userAgentValue = packageName
+        setContent { SanpoRoadApp() }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,20 +63,23 @@ fun MapRecordScreen(restoredRoute: SavedRoute?, onSave: (SavedRoute) -> Unit, on
     var recording by remember { mutableStateOf(false) }
     var points by remember { mutableStateOf(listOf<LatLngPoint>()) }
     var startedAt by remember { mutableStateOf(0L) }
-    var lastPoint by remember { mutableStateOf<LatLng?>(null) }
-    var current by remember { mutableStateOf<LatLng?>(null) }
+    var lastPoint by remember { mutableStateOf<GeoPoint?>(null) }
+    var current by remember { mutableStateOf<GeoPoint?>(null) }
     var distance by remember { mutableDoubleStateOf(0.0) }
     var showName by remember { mutableStateOf(false) }
     var routeName by remember { mutableStateOf("") }
+    val mapView = remember { MapView(context).apply { setTileSource(TileSourceFactory.MAPNIK); setMultiTouchControls(true); controller.setZoom(16.0) } }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { perms -> if (perms[Manifest.permission.ACCESS_FINE_LOCATION] == true || perms[Manifest.permission.ACCESS_COARSE_LOCATION] == true) { startedAt = System.currentTimeMillis(); recording = true } }
     val callback = rememberUpdatedState(object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             val loc = result.lastLocation ?: return
-            val p = LatLng(loc.latitude, loc.longitude)
+            val p = GeoPoint(loc.latitude, loc.longitude)
             current = p
             points = points + LatLngPoint(p.latitude, p.longitude, System.currentTimeMillis())
             lastPoint?.let { distance += haversine(it, p) }
             lastPoint = p
+            mapView.controller.animateTo(p)
+            mapView.invalidate()
         }
     })
     DisposableEffect(recording) {
@@ -78,17 +89,18 @@ fun MapRecordScreen(restoredRoute: SavedRoute?, onSave: (SavedRoute) -> Unit, on
         }
         onDispose { fused.removeLocationUpdates(callback.value) }
     }
-    LaunchedEffect(restoredRoute) { if (restoredRoute != null && restoredRoute.points.isNotEmpty()) current = LatLng(restoredRoute.points.last().lat, restoredRoute.points.last().lng) }
-    val poly = if (recording || restoredRoute == null) points.map { LatLng(it.lat, it.lng) } else restoredRoute.points.map { LatLng(it.lat, it.lng) }
-    val camera = rememberCameraPositionState()
-    val hasLocationPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED || ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    DisposableEffect(points, restoredRoute) {
+        mapView.overlays.clear()
+        val poly = if (restoredRoute != null && !recording) restoredRoute.points.map { GeoPoint(it.lat, it.lng) } else points.map { GeoPoint(it.lat, it.lng) }
+        if (poly.size >= 2) mapView.overlays.add(Polyline().apply { setPoints(poly); width = 10f })
+        current?.let { p -> mapView.overlays.add(Marker(mapView).apply { position = p; title = "現在地"; setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM) }) }
+        mapView.invalidate()
+        onDispose { }
+    }
+    val poly = if (recording || restoredRoute == null) points.map { GeoPoint(it.lat, it.lng) } else restoredRoute.points.map { GeoPoint(it.lat, it.lng) }
+    LaunchedEffect(restoredRoute) { if (restoredRoute != null && restoredRoute.points.isNotEmpty()) { current = GeoPoint(restoredRoute.points.last().lat, restoredRoute.points.last().lng); mapView.controller.setCenter(current) } }
     Column(Modifier.fillMaxSize()) {
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            GoogleMap(modifier = Modifier.fillMaxSize(), cameraPositionState = camera, properties = MapProperties(isMyLocationEnabled = hasLocationPermission), uiSettings = MapUiSettings(myLocationButtonEnabled = hasLocationPermission, zoomControlsEnabled = false)) {
-                if (poly.size >= 2) Polyline(points = poly, width = 10f)
-                current?.let { Marker(state = MarkerState(it), title = "現在地") }
-            }
-        }
+        AndroidView(factory = { mapView }, modifier = Modifier.weight(1f).fillMaxWidth())
         if (poly.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             StatBox("距離", String.format(Locale.JAPAN, "%.2f km", (if (recording) distance else restoredRoute?.distanceMeters ?: 0.0) / 1000.0), Modifier.weight(1f))
             StatBox("地点", poly.size.toString(), Modifier.weight(1f))
@@ -115,12 +127,10 @@ fun MapRecordScreen(restoredRoute: SavedRoute?, onSave: (SavedRoute) -> Unit, on
 @Composable
 fun SavedRoutesScreen(routes: List<SavedRoute>, onSelect: (SavedRoute) -> Unit) {
     if (routes.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("保存したコースはありません") }
-    else LazyColumn(Modifier.fillMaxSize()) { items(routes) { route ->
-        ListItem(headlineContent = { Text(route.name) }, supportingContent = { Text(String.format(Locale.JAPAN, "%.2f km / %d地点", route.distanceMeters / 1000.0, route.points.size)) }, leadingContent = { Text("🚶") }, trailingContent = { TextButton(onClick = { onSelect(route) }) { Text("地図") } }); HorizontalDivider()
-    } }
+    else LazyColumn(Modifier.fillMaxSize()) { items(routes) { route -> ListItem(headlineContent = { Text(route.name) }, supportingContent = { Text(String.format(Locale.JAPAN, "%.2f km / %d地点", route.distanceMeters / 1000.0, route.points.size)) }, leadingContent = { Text("🚶") }, trailingContent = { TextButton(onClick = { onSelect(route) }) { Text("地図") } }); HorizontalDivider() } }
 }
 
 @Composable
 fun StatBox(label: String, value: String, modifier: Modifier = Modifier) { Card(modifier) { Column(Modifier.padding(12.dp)) { Text(label, style = MaterialTheme.typography.labelMedium); Text(value, style = MaterialTheme.typography.titleMedium) } } }
 
-fun haversine(a: LatLng, b: LatLng): Double { val r = 6371000.0; val dLat = Math.toRadians(b.latitude - a.latitude); val dLon = Math.toRadians(b.longitude - a.longitude); val x = sin(dLat / 2).pow(2) + cos(Math.toRadians(a.latitude)) * cos(Math.toRadians(b.latitude)) * sin(dLon / 2).pow(2); return r * 2 * atan2(sqrt(x), sqrt(1 - x)) }
+fun haversine(a: GeoPoint, b: GeoPoint): Double { val r = 6371000.0; val dLat = Math.toRadians(b.latitude - a.latitude); val dLon = Math.toRadians(b.longitude - a.longitude); val x = sin(dLat / 2).pow(2) + cos(Math.toRadians(a.latitude)) * cos(Math.toRadians(b.latitude)) * sin(dLon / 2).pow(2); return r * 2 * atan2(sqrt(x), sqrt(1 - x)) }
