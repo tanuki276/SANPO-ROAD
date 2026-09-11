@@ -14,6 +14,7 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import kotlinx.serialization.builtins.ListSerializer
 import org.osmdroid.util.GeoPoint
 import kotlin.math.*
 
@@ -41,8 +42,6 @@ class LocationTrackingService : Service() {
         when (intent?.action) {
             ACTION_STOP -> stopTracking()
             ACTION_START -> startTracking()
-            // START_STICKY may recreate the service without an Intent. Restore only an
-            // actually active recording; never create a new route after a manual stop.
             null -> if (isRecording(this)) startTracking() else stopSelf()
         }
         return if (isRecording(this)) START_STICKY else START_NOT_STICKY
@@ -89,12 +88,11 @@ class LocationTrackingService : Service() {
         var distance = getDistanceMeters(this)
         if (previous != null) {
             val segment = haversine(GeoPoint(previous.lat, previous.lng), GeoPoint(point.lat, point.lng))
-            // Ignore impossible jumps caused by a bad GPS fix.
             if (segment > MAX_SEGMENT_METERS) return
             distance += segment
         }
         points += point
-        put(this, KEY_POINTS, kotlinx.serialization.json.Json.encodeToString<List<LatLngPoint>>(points))
+        put(this, KEY_POINTS, JsonConfig.encodeToString(ListSerializer(LatLngPoint.serializer()), points))
         put(this, KEY_DISTANCE, distance)
     }
 
@@ -152,7 +150,7 @@ class LocationTrackingService : Service() {
                 ?: prefs(context).getFloat(KEY_DISTANCE, 0f).toDouble()
         }.getOrDefault(0.0)
         fun getPoints(context: Context): List<LatLngPoint> = runCatching {
-            kotlinx.serialization.json.Json.decodeFromString<List<LatLngPoint>>(prefs(context).getString(KEY_POINTS, "[]") ?: "[]")
+            JsonConfig.decodeFromString<List<LatLngPoint>>(prefs(context).getString(KEY_POINTS, "[]") ?: "[]")
         }.getOrDefault(emptyList())
 
         fun clearPending(context: Context) {
@@ -178,5 +176,11 @@ class LocationTrackingService : Service() {
             val x = sin(dLat / 2).pow(2) + cos(Math.toRadians(a.latitude)) * cos(Math.toRadians(b.latitude)) * sin(dLon / 2).pow(2)
             return r * 2 * atan2(sqrt(x), sqrt(1 - x))
         }
+    }
+
+    private object JsonConfig {
+        private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        fun <T> encodeToString(serializer: kotlinx.serialization.KSerializer<T>, value: T): String = json.encodeToString(serializer, value)
+        inline fun <reified T> decodeFromString(value: String): T = json.decodeFromString(value)
     }
 }
