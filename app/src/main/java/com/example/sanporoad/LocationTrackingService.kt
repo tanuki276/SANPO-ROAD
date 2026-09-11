@@ -94,7 +94,7 @@ class LocationTrackingService : Service() {
             distance += segment
         }
         points += point
-        put(this, KEY_POINTS, kotlinx.serialization.json.Json.encodeToString(points))
+        put(this, KEY_POINTS, kotlinx.serialization.json.Json.encodeToString<List<LatLngPoint>>(points))
         put(this, KEY_DISTANCE, distance)
     }
 
