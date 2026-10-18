@@ -47,7 +47,10 @@ dependencies {
     // supabase-kt 3.0.1 is compatible with the project's Kotlin 2.0.21 toolchain.
     implementation("io.github.jan-tennert.supabase:auth-kt:3.0.1")
     implementation("io.github.jan-tennert.supabase:postgrest-kt:3.0.1")
+    implementation("io.github.jan-tennert.supabase:storage-kt:3.0.1")
     implementation("io.ktor:ktor-client-android:3.0.0")
+
+    implementation("io.coil-kt:coil-compose:2.7.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling:1.7.8")
 }
