@@ -1,9 +1,11 @@
 package com.example.sanporoad
 
+import android.content.Intent
 import io.github.jan.supabase.auth.Auth
-import io.github.jan.supabase.auth.OtpType
+import io.github.jan.supabase.auth.FlowType
 import io.github.jan.supabase.auth.auth
-import io.github.jan.supabase.auth.providers.builtin.OTP
+import io.github.jan.supabase.auth.handleDeeplinks
+import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.from
@@ -22,6 +24,8 @@ import kotlin.time.Duration.Companion.minutes
 
 object SupabaseRouteSync {
     private const val PHOTO_BUCKET = "walk-photos"
+    private const val AUTH_SCHEME = "sanporoad"
+    private const val AUTH_HOST = "auth"
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
     private val client by lazy {
         createSupabaseClient(BuildConfig.SUPABASE_URL, BuildConfig.SUPABASE_PUBLISHABLE_KEY) {
@@ -29,6 +33,9 @@ object SupabaseRouteSync {
                 autoLoadFromStorage = false
                 alwaysAutoRefresh = false
                 enableLifecycleCallbacks = false
+                flowType = FlowType.PKCE
+                scheme = AUTH_SCHEME
+                host = AUTH_HOST
             }
             install(Postgrest)
             install(Storage)
@@ -38,17 +45,19 @@ object SupabaseRouteSync {
         client.auth.awaitInitialization()
         if (client.auth.currentSessionOrNull() == null) client.auth.loadFromStorage(autoRefresh = false)
     }
-    suspend fun requestOtp(email: String) {
+    suspend fun signInWithGoogle() {
         client.auth.awaitInitialization()
-        client.auth.signInWith(OTP) { this.email = email }
+        client.auth.signInWith(Google)
     }
-    suspend fun verifyOtp(email: String, token: String): String {
-        client.auth.verifyEmailOtp(type = OtpType.Email.EMAIL, email = email, token = token)
-        return requireAccount()
+    fun handleAuthDeepLink(intent: Intent, onSuccess: (userId: String, email: String?) -> Unit) {
+        client.handleDeeplinks(intent) { session ->
+            val user = session.user ?: return@handleDeeplinks
+            onSuccess(user.id, user.email)
+        }
     }
     private fun requireAccount(): String {
-        val user = client.auth.currentUserOrNull() ?: error("設定からログインしてください")
-        check(!user.email.isNullOrBlank()) { "設定からメールでログインしてください" }
+        val user = client.auth.currentUserOrNull() ?: error("設定からGoogleでログインしてください")
+        check(!user.email.isNullOrBlank()) { "Googleアカウントのメールアドレスを取得できませんでした" }
         return user.id
     }
     suspend fun prepareAccount(): String {
