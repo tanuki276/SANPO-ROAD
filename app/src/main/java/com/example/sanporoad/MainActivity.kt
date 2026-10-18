@@ -2,6 +2,7 @@ package com.example.sanporoad
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -14,6 +15,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -21,6 +23,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import coil.compose.AsyncImage
 import com.google.android.gms.location.LocationServices
 import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
@@ -33,6 +36,7 @@ import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private val SANPO_OSM_TILE_SOURCE = XYTileSource(
@@ -51,6 +55,8 @@ private val SANPO_OSM_TILE_SOURCE = XYTileSource(
     )
 )
 
+private enum class AppScreen { MAP, HISTORY, INSIGHTS }
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,13 +73,15 @@ class MainActivity : ComponentActivity() {
 fun SanpoRoadApp() {
     val context = LocalContext.current
     val store = remember { RouteStore(context) }
+    val preferences = remember { WalkPreferences(context) }
     val scope = rememberCoroutineScope()
 
-    var showHistory by remember { mutableStateOf(false) }
+    var screen by remember { mutableStateOf(AppScreen.MAP) }
     var selectedRoute by remember { mutableStateOf<SavedRoute?>(null) }
     var syncVersion by remember { mutableIntStateOf(0) }
     var syncStatus by remember { mutableStateOf("ローカル保存") }
     var lastSavedRoute by remember { mutableStateOf<SavedRoute?>(null) }
+    var weeklyGoalMeters by remember { mutableDoubleStateOf(preferences.weeklyGoalMeters) }
 
     val routes = remember(syncVersion) { store.getAll() }
     val stats = remember(syncVersion) { WalkStats.calculate(routes) }
@@ -100,38 +108,51 @@ fun SanpoRoadApp() {
                         }
                     },
                     actions = {
-                        TextButton(onClick = { showHistory = !showHistory }) {
-                            Text(if (showHistory) "地図" else "記録")
-                        }
+                        TextButton(onClick = { screen = AppScreen.MAP }) { Text("地図") }
+                        TextButton(onClick = { screen = AppScreen.HISTORY }) { Text("記録") }
+                        TextButton(onClick = { screen = AppScreen.INSIGHTS }) { Text("振返り") }
                     }
                 )
             }
         ) { padding ->
             Column(Modifier.padding(padding).fillMaxSize()) {
-                WalkSummaryCard(stats)
+                if (screen != AppScreen.INSIGHTS) WalkSummaryCard(stats, weeklyGoalMeters)
 
-                if (showHistory) {
-                    WalkHistoryScreen(routes) { route ->
-                        selectedRoute = route
-                        showHistory = false
-                    }
-                } else {
-                    MapRecordScreen(
-                        restoredRoute = selectedRoute,
-                        onClearRestoredRoute = { selectedRoute = null },
-                        onSave = { route ->
-                            store.save(route)
-                            lastSavedRoute = route
+                when (screen) {
+                    AppScreen.HISTORY -> {
+                        WalkHistoryScreen(routes) { route ->
                             selectedRoute = route
-                            syncVersion++
-                            scope.launch {
-                                syncStatus = "同期中…"
-                                val synced = store.syncRoute(route)
-                                syncStatus = if (synced) "ローカル + Supabase" else "ローカル保存（同期待ち）"
+                            screen = AppScreen.MAP
+                        }
+                    }
+                    AppScreen.INSIGHTS -> {
+                        WalkInsightsScreen(
+                            routes = routes,
+                            weeklyGoalMeters = weeklyGoalMeters,
+                            onWeeklyGoalChange = { meters ->
+                                preferences.weeklyGoalMeters = meters
+                                weeklyGoalMeters = meters
                             }
-                        },
-                        onShowSaved = { showHistory = true }
-                    )
+                        )
+                    }
+                    AppScreen.MAP -> {
+                        MapRecordScreen(
+                            restoredRoute = selectedRoute,
+                            onClearRestoredRoute = { selectedRoute = null },
+                            onSave = { route ->
+                                store.save(route)
+                                lastSavedRoute = route
+                                selectedRoute = route
+                                syncVersion++
+                                scope.launch {
+                                    syncStatus = "同期中…"
+                                    val synced = store.syncRoute(route)
+                                    syncStatus = if (synced) "ローカル + Supabase" else "ローカル保存（同期待ち）"
+                                }
+                            },
+                            onShowSaved = { screen = AppScreen.HISTORY }
+                        )
+                    }
                 }
             }
         }
@@ -147,13 +168,15 @@ fun SanpoRoadApp() {
 }
 
 @Composable
-private fun WalkSummaryCard(stats: WalkStatsSnapshot) {
+private fun WalkSummaryCard(stats: WalkStatsSnapshot, weeklyGoalMeters: Double) {
     val weekComparison = when {
         stats.totalWalks == 0 -> "最初の散歩を記録してみよう"
         stats.weekDeltaMeters > 100 -> "先週より ${formatKm(stats.weekDeltaMeters)} 多く歩いています"
         stats.weekDeltaMeters < -100 -> "先週より ${formatKm(-stats.weekDeltaMeters)} 少なめです"
         else -> "先週とほぼ同じペースです"
     }
+    val goalProgress = if (weeklyGoalMeters <= 0) 0f else
+        (stats.thisWeekDistanceMeters / weeklyGoalMeters).coerceIn(0.0, 1.0).toFloat()
 
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
         Column(Modifier.padding(14.dp)) {
@@ -174,7 +197,9 @@ private fun WalkSummaryCard(stats: WalkStatsSnapshot) {
                 }
             }
             Spacer(Modifier.height(6.dp))
-            Text(weekComparison, style = MaterialTheme.typography.bodySmall)
+            LinearProgressIndicator(progress = goalProgress, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(4.dp))
+            Text("今週の目安 ${formatKm(weeklyGoalMeters)} ・ $weekComparison", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("累計 ${formatKm(stats.totalDistanceMeters)}", style = MaterialTheme.typography.labelLarge)
@@ -221,7 +246,12 @@ fun MapRecordScreen(
     var showSaveDialog by remember { mutableStateOf(LocationTrackingService.hasPendingRecording(context)) }
     var routeName by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
+    var photoUri by remember { mutableStateOf<Uri?>(null) }
     var current by remember { mutableStateOf<GeoPoint?>(null) }
+
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        photoUri = uri
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -404,6 +434,17 @@ fun MapRecordScreen(
                     minLines = 2,
                     maxLines = 4
                 )
+                OutlinedButton(onClick = { photoPicker.launch("image/*") }) {
+                    Text(if (photoUri == null) "写真を添える" else "写真を変更")
+                }
+                photoUri?.let { uri ->
+                    AsyncImage(
+                        model = uri,
+                        contentDescription = "選択した散歩写真",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxWidth().height(140.dp)
+                    )
+                }
             }
         },
         confirmButton = {
@@ -413,18 +454,21 @@ fun MapRecordScreen(
                 val savedDistance = LocationTrackingService.getDistanceMeters(context)
                 val savedDuration = LocationTrackingService.getDurationMs(context)
                 if (savedPoints.isNotEmpty()) {
+                    val routeId = System.currentTimeMillis()
                     val safeName = routeName.ifBlank {
                         "${SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.JAPAN).format(Date(savedStartedAt))}の散歩"
                     }
+                    val photoPath = photoUri?.let { PhotoStore.copyIntoAppStorage(context, it, routeId) }
                     onSave(
                         SavedRoute(
-                            id = System.currentTimeMillis(),
+                            id = routeId,
                             name = safeName,
                             startedAt = savedStartedAt,
                             durationMs = savedDuration,
                             distanceMeters = savedDistance,
                             points = savedPoints,
-                            note = note.trim()
+                            note = note.trim(),
+                            photoPath = photoPath
                         )
                     )
                 }
@@ -435,6 +479,7 @@ fun MapRecordScreen(
                 gpsAccuracy = -1.0
                 routeName = ""
                 note = ""
+                photoUri = null
                 showSaveDialog = false
             }) { Text("保存") }
         },
@@ -447,6 +492,7 @@ fun MapRecordScreen(
                 gpsAccuracy = -1.0
                 routeName = ""
                 note = ""
+                photoUri = null
                 showSaveDialog = false
             }) { Text("破棄") }
         }
@@ -461,15 +507,24 @@ private fun WalkResultDialog(
 ) {
     val previousLongest = previousRoutes.maxOfOrNull { it.distanceMeters } ?: 0.0
     val isDistanceBest = route.distanceMeters > previousLongest && previousLongest > 0.0
+    val comparison = remember(route.id, previousRoutes.size) {
+        WalkInsights.compareWithPreviousSimilar(route, previousRoutes)
+    }
 
     AlertDialog(
         onDismissRequest = onClose,
         title = { Text(if (isDistanceBest) "自己ベスト！" else "散歩を記録しました") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                RoutePhoto(route, Modifier.fillMaxWidth().height(150.dp))
                 Text(route.name, style = MaterialTheme.typography.titleMedium)
                 Text("${formatKm(route.distanceMeters)} ・ ${formatDuration(route.durationMs)}")
                 Text("平均ペース ${paceText(route.distanceMeters, route.durationMs)}")
+                comparison?.let {
+                    HorizontalDivider()
+                    Text("前回の似たコースと比較", style = MaterialTheme.typography.labelLarge)
+                    Text(comparisonText(it))
+                }
                 if (route.note.isNotBlank()) {
                     HorizontalDivider()
                     Text(route.note)
@@ -488,22 +543,93 @@ fun WalkHistoryScreen(routes: List<SavedRoute>, onSelect: (SavedRoute) -> Unit) 
         }
     } else {
         LazyColumn(Modifier.fillMaxSize()) {
-            items(routes) { route ->
+            items(routes, key = { it.id }) { route ->
+                val comparison = remember(route.id, routes.size) {
+                    WalkInsights.compareWithPreviousSimilar(route, routes)
+                }
                 ListItem(
                     headlineContent = { Text(route.name) },
                     supportingContent = {
                         Column {
                             Text("${formatKm(route.distanceMeters)} / ${formatDuration(route.durationMs)} / ${paceText(route.distanceMeters, route.durationMs)}")
+                            comparison?.let { Text("前回比 ${comparisonCompactText(it)}") }
                             if (route.note.isNotBlank()) Text(route.note, maxLines = 1)
                         }
                     },
-                    leadingContent = { Text("🚶") },
+                    leadingContent = {
+                        if (route.photoPath != null || route.photoObjectPath != null) {
+                            RoutePhoto(route, Modifier.size(52.dp))
+                        } else {
+                            Text("🚶")
+                        }
+                    },
                     trailingContent = { TextButton(onClick = { onSelect(route) }) { Text("地図") } }
                 )
                 HorizontalDivider()
             }
         }
     }
+}
+
+@Composable
+private fun RoutePhoto(route: SavedRoute, modifier: Modifier = Modifier) {
+    val local = remember(route.photoPath) { PhotoStore.localFile(route.photoPath) }
+    var remoteUrl by remember(route.photoObjectPath) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(route.photoObjectPath, local) {
+        if (local == null && route.photoObjectPath != null) {
+            remoteUrl = SupabaseRouteSync.signedPhotoUrl(route.photoObjectPath)
+        }
+    }
+
+    val model: Any? = local ?: remoteUrl
+    if (model != null) {
+        AsyncImage(
+            model = model,
+            contentDescription = "散歩の写真",
+            contentScale = ContentScale.Crop,
+            modifier = modifier
+        )
+    }
+}
+
+private fun comparisonText(comparison: RouteComparison): String {
+    val distance = signedKm(comparison.distanceDeltaMeters)
+    val duration = signedDuration(comparison.durationDeltaMs)
+    val pace = comparison.paceDeltaSecondsPerKm?.let { delta ->
+        when {
+            abs(delta) < 2.0 -> "ペースはほぼ同じ"
+            delta < 0 -> "ペース ${formatPaceDelta(-delta)}速い"
+            else -> "ペース ${formatPaceDelta(delta)}ゆっくり"
+        }
+    } ?: "ペース比較なし"
+    return "距離 $distance ・ 時間 $duration ・ $pace"
+}
+
+private fun comparisonCompactText(comparison: RouteComparison): String {
+    val pace = comparison.paceDeltaSecondsPerKm
+    return when {
+        pace == null -> signedDuration(comparison.durationDeltaMs)
+        abs(pace) < 2.0 -> "ほぼ同じペース"
+        pace < 0 -> "${formatPaceDelta(-pace)}速い"
+        else -> "${formatPaceDelta(pace)}ゆっくり"
+    }
+}
+
+private fun signedKm(meters: Double): String {
+    val sign = if (meters >= 0) "+" else "-"
+    return "$sign${String.format(Locale.JAPAN, "%.2f km", abs(meters) / 1000.0)}"
+}
+
+private fun signedDuration(ms: Long): String {
+    val sign = if (ms >= 0) "+" else "-"
+    val seconds = abs(ms) / 1000L
+    return "$sign${seconds / 60}:${String.format(Locale.JAPAN, "%02d", seconds % 60)}"
+}
+
+private fun formatPaceDelta(seconds: Double): String {
+    val sec = seconds.roundToInt().coerceAtLeast(0)
+    return "${sec / 60}:${String.format(Locale.JAPAN, "%02d", sec % 60)}/km "
 }
 
 private fun formatKm(distanceMeters: Double): String =
