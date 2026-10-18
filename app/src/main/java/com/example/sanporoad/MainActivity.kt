@@ -1,7 +1,6 @@
 package com.example.sanporoad
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -35,8 +34,14 @@ import java.util.*
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // OSM tile servers require a meaningful application User-Agent.
-        Configuration.getInstance().userAgentValue = "SanpoRoad/1.0 (https://github.com/tanuki276/SANPO-ROAD)"
+
+        // osmdroid must be initialised with an Android context before a MapView is created.
+        // Without this, tile cache/network configuration can be incomplete on modern Android.
+        Configuration.getInstance().apply {
+            load(applicationContext, getSharedPreferences("osmdroid", MODE_PRIVATE))
+            userAgentValue = "SanpoRoad/1.0 (https://github.com/tanuki276/SANPO-ROAD)"
+        }
+
         setContent { SanpoRoadApp() }
     }
 }
@@ -99,11 +104,14 @@ fun MapRecordScreen(restoredRoute: SavedRoute?, onSave: (SavedRoute) -> Unit, on
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val fused = remember { LocationServices.getFusedLocationProviderClient(context) }
+    val fallbackCenter = remember { GeoPoint(36.2048, 138.2529) }
     val mapView = remember {
         MapView(context).apply {
             setTileSource(TileSourceFactory.MAPNIK)
             setMultiTouchControls(true)
-            controller.setZoom(16.0)
+            // Avoid the osmdroid default of (0, 0), which is open ocean and can look like a blank map.
+            controller.setZoom(6.0)
+            controller.setCenter(fallbackCenter)
         }
     }
     var recording by remember { mutableStateOf(LocationTrackingService.isRecording(context)) }
@@ -124,7 +132,13 @@ fun MapRecordScreen(restoredRoute: SavedRoute?, onSave: (SavedRoute) -> Unit, on
         }
     }
 
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, mapView) {
+        // Compose can install this observer after the Activity is already RESUMED, in which
+        // case no ON_RESUME event will be delivered to this observer. Sync the initial state.
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            mapView.onResume()
+        }
+
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> mapView.onResume()
@@ -133,10 +147,35 @@ fun MapRecordScreen(restoredRoute: SavedRoute?, onSave: (SavedRoute) -> Unit, on
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); mapView.onDetach() }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            mapView.onPause()
+            mapView.onDetach()
+        }
     }
 
     LaunchedEffect(Unit) {
+        val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+        // If the user has already granted location permission, start the map at their last
+        // known location instead of leaving it at the fallback center.
+        if (hasFine || hasCoarse) {
+            try {
+                fused.lastLocation.addOnSuccessListener { location ->
+                    location?.let {
+                        val p = GeoPoint(it.latitude, it.longitude)
+                        current = p
+                        mapView.controller.setZoom(16.0)
+                        mapView.controller.setCenter(p)
+                        mapView.invalidate()
+                    }
+                }
+            } catch (_: SecurityException) {
+                // Permission may have been revoked between the check and the request.
+            }
+        }
+
         while (true) {
             val stateRecording = LocationTrackingService.isRecording(context)
             val statePoints = LocationTrackingService.getPoints(context)
@@ -144,7 +183,13 @@ fun MapRecordScreen(restoredRoute: SavedRoute?, onSave: (SavedRoute) -> Unit, on
             points = statePoints
             startedAt = LocationTrackingService.getStartedAt(context)
             distance = LocationTrackingService.getDistanceMeters(context)
-            statePoints.lastOrNull()?.let { current = GeoPoint(it.lat, it.lng) }
+            statePoints.lastOrNull()?.let {
+                val p = GeoPoint(it.lat, it.lng)
+                current = p
+                if (stateRecording) {
+                    mapView.controller.animateTo(p)
+                }
+            }
             if (!stateRecording && LocationTrackingService.hasPendingRecording(context) && !showName) {
                 showName = true
             }
@@ -155,7 +200,7 @@ fun MapRecordScreen(restoredRoute: SavedRoute?, onSave: (SavedRoute) -> Unit, on
     val poly = if (recording || restoredRoute == null) points.map { GeoPoint(it.lat, it.lng) }
     else restoredRoute.points.map { GeoPoint(it.lat, it.lng) }
 
-    DisposableEffect(points, restoredRoute, recording) {
+    DisposableEffect(points, restoredRoute, recording, current) {
         mapView.overlays.clear()
         if (poly.size >= 2) mapView.overlays.add(Polyline().apply { setPoints(poly); width = 10f })
         current?.let { p ->
@@ -173,6 +218,7 @@ fun MapRecordScreen(restoredRoute: SavedRoute?, onSave: (SavedRoute) -> Unit, on
         if (restoredRoute != null && restoredRoute.points.isNotEmpty() && !recording) {
             val last = GeoPoint(restoredRoute.points.last().lat, restoredRoute.points.last().lng)
             current = last
+            mapView.controller.setZoom(16.0)
             mapView.controller.setCenter(last)
         }
     }
