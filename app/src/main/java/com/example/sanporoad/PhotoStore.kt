@@ -25,3 +25,4 @@ object PhotoStore {
         ?.let(::File)
         ?.takeIf { it.exists() && it.isFile }
 }
+

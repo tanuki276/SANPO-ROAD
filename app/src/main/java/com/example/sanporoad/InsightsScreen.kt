@@ -410,3 +410,4 @@ private fun fmtDuration(ms: Long): String {
     val totalMinutes = ms.coerceAtLeast(0L) / 60_000L
     return if (totalMinutes >= 60) "${totalMinutes / 60}時間${totalMinutes % 60}分" else "${totalMinutes}分"
 }
+

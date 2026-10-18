@@ -1,6 +1,7 @@
 package com.example.sanporoad
 
 import android.app.Notification
+import android.app.PendingIntent
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
@@ -24,6 +25,7 @@ class LocationTrackingService : Service() {
 
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
+            if (!isRecording(this@LocationTrackingService)) return
             val loc = result.lastLocation ?: return
             val now = System.currentTimeMillis()
             val accuracy = if (loc.hasAccuracy()) loc.accuracy else Float.MAX_VALUE
@@ -53,6 +55,13 @@ class LocationTrackingService : Service() {
     }
 
     private fun startTracking() {
+        // A repeated start must never overwrite a walk awaiting save/discard.
+        if (hasPendingRecording(this)) {
+            startForeground(NOTIFICATION_ID, buildNotification())
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
         if (!isRecording(this)) {
             put(this, KEY_RECORDING, true)
             put(this, KEY_PENDING, false)
@@ -63,16 +72,18 @@ class LocationTrackingService : Service() {
             put(this, KEY_LAST_ACCURACY, -1.0)
         }
 
-        startForeground(NOTIFICATION_ID, buildNotification())
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L)
             .setMinUpdateIntervalMillis(1000L)
             .setMaxUpdateDelayMillis(4000L)
             .setWaitForAccurateLocation(true)
             .build()
         try {
+            startForeground(NOTIFICATION_ID, buildNotification())
             fused.requestLocationUpdates(request, callback, mainLooper)
         } catch (_: SecurityException) {
+            put(this, KEY_STOPPED_AT, System.currentTimeMillis())
             put(this, KEY_RECORDING, false)
+            put(this, KEY_PENDING, true)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
@@ -147,10 +158,25 @@ class LocationTrackingService : Service() {
     private fun buildNotification(): Notification {
         val accuracy = getLastAccuracyMeters(this)
         val suffix = if (accuracy > 0) " / GPS ±${accuracy.roundToInt()}m" else ""
+        val openApp = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val stopWalk = PendingIntent.getService(
+            this, 1, Intent(this, LocationTrackingService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val distance = String.format(java.util.Locale.JAPAN, "%.2f km", getDistanceMeters(this) / 1000.0)
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentTitle("サンポロード")
-            .setContentText("散歩を記録中…$suffix")
+            .setContentText("$distance ・ 散歩を記録中$suffix")
+            .setContentIntent(openApp)
+            .setWhen(getStartedAt(this))
+            .setUsesChronometer(true)
+            .setOnlyAlertOnce(true)
+            .addAction(android.R.drawable.ic_media_pause, "散歩を終了", stopWalk)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()
@@ -196,6 +222,7 @@ class LocationTrackingService : Service() {
         const val ACTION_STOP = "com.example.sanporoad.STOP"
 
         fun start(context: Context) {
+            if (isRecording(context) || hasPendingRecording(context)) return
             val intent = Intent(context, LocationTrackingService::class.java).setAction(ACTION_START)
             androidx.core.content.ContextCompat.startForegroundService(context, intent)
         }
@@ -273,3 +300,4 @@ class LocationTrackingService : Service() {
         inline fun <reified T> decodeFromString(value: String): T = json.decodeFromString(value)
     }
 }
+

@@ -77,3 +77,4 @@ object WalkStats {
         return max(streak, 0)
     }
 }
+

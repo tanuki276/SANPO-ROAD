@@ -11,8 +11,10 @@ class RouteStore(context: Context) {
     private val json = Json { ignoreUnknownKeys = true }
     private val routesSerializer = ListSerializer(SavedRoute.serializer())
 
+    @Synchronized
     fun getAll(): List<SavedRoute> = readAll().sortedByDescending { it.startedAt }
 
+    @Synchronized
     fun save(route: SavedRoute) {
         val merged = readAll().associateBy { it.id }.toMutableMap().apply {
             put(route.id, route)
@@ -20,6 +22,7 @@ class RouteStore(context: Context) {
         writeAll(merged)
     }
 
+    @Synchronized
     fun merge(routes: List<SavedRoute>) {
         if (routes.isEmpty()) return
         val merged = readAll().associateBy { it.id }.toMutableMap()
@@ -69,7 +72,9 @@ class RouteStore(context: Context) {
     }
 
     private fun writeAll(routes: List<SavedRoute>) {
-        prefs.edit().putString("routes", json.encodeToString(routesSerializer, routes)).apply()
+        check(prefs.edit().putString("routes", json.encodeToString(routesSerializer, routes)).commit()) {
+            "Unable to persist walk records"
+        }
     }
 }
 
@@ -79,3 +84,4 @@ data class SyncResult(
     val downloaded: Int,
     val cloudAvailable: Boolean
 )
+
