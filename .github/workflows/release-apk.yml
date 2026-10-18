@@ -17,7 +17,6 @@ jobs:
       contents: write
     env:
       RELEASE_TAG: ${{ inputs.tag }}
-      SANPO_KEYSTORE_PATH: ${{ runner.temp }}/sanpo-release.jks
       SANPO_STORE_PASSWORD: ${{ secrets.SANPO_STORE_PASSWORD }}
       SANPO_KEY_ALIAS: ${{ secrets.SANPO_KEY_ALIAS }}
       SANPO_KEY_PASSWORD: ${{ secrets.SANPO_KEY_PASSWORD }}
@@ -25,6 +24,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Configure signing path
+        run: echo "SANPO_KEYSTORE_PATH=$RUNNER_TEMP/sanpo-release.jks" >> "$GITHUB_ENV"
       - name: Validate tag and signing configuration
         env:
           KEYSTORE_BASE64: ${{ secrets.SANPO_KEYSTORE_BASE64 }}
