@@ -50,4 +50,3 @@ export async function GET(request) {
     return Response.json({ error: 'server_error' }, { status: 500 })
   }
 }
-

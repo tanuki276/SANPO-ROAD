@@ -110,4 +110,3 @@ object WalkInsights {
         return r * 2 * atan2(sqrt(x), sqrt(1 - x))
     }
 }
-

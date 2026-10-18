@@ -690,12 +690,14 @@ fun WalkHistoryScreen(routes: List<SavedRoute>, onStartWalk: () -> Unit, onSelec
                 Text("一致する記録がありません。別の名前やメモで検索してみてください。", Modifier.padding(vertical = 24.dp))
             }
             items(visibleRoutes, key = { it.id }) { route ->
+                val comparison = remember(route, routes) { WalkInsights.compareWithPreviousSimilar(route, routes) }
                 Card(onClick = { onSelect(route) }, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(SimpleDateFormat("yyyy年M月d日（E） HH:mm", Locale.JAPAN).format(Date(route.startedAt)), style = MaterialTheme.typography.labelMedium)
                         Text(route.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         RoutePhoto(route, Modifier.fillMaxWidth().height(140.dp))
                         Text("${formatKm(route.distanceMeters)} ・ ${formatDuration(route.durationMs)} ・ ${paceText(route.distanceMeters, route.durationMs)}")
+                        comparison?.let { Text("前回比 ${comparisonCompactText(it)}", style = MaterialTheme.typography.bodySmall) }
                         if (route.note.isNotBlank()) Text(route.note, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text("地図で見る →", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     }

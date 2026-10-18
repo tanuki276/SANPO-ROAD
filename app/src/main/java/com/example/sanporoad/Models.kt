@@ -26,4 +26,3 @@ data class SavedRoute(
     // Private Supabase Storage object path used to back up the photo across devices.
     val photoObjectPath: String? = null
 )
-

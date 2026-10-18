@@ -23,4 +23,3 @@
             android:foregroundServiceType="location" />
     </application>
 </manifest>
-

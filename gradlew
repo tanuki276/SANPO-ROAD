@@ -9,4 +9,3 @@ if [ ! -f "$CLASSPATH" ]; then
 fi
 
 exec java -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain "$@"
-
