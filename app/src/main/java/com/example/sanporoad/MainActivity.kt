@@ -24,20 +24,46 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.android.gms.location.LocationServices
 import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.tilesource.TileSourcePolicy
+import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.CopyrightOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import java.text.SimpleDateFormat
 import java.util.*
+
+/**
+ * Use the OSM standard tile endpoint, but do not use TileSourceFactory.MAPNIK here.
+ * MAPNIK's policy forces osmdroid's normalized user agent (package/version), which hides the
+ * explicit app/contact user agent configured below. A distinct source name also avoids reusing
+ * any previously cached 403 "Access blocked" tiles stored under the old "Mapnik" cache key.
+ */
+private val SANPO_OSM_TILE_SOURCE = XYTileSource(
+    "SanpoRoadOSM-v2",
+    0,
+    19,
+    256,
+    ".png",
+    arrayOf("https://tile.openstreetmap.org/"),
+    "© OpenStreetMap contributors",
+    TileSourcePolicy(
+        2,
+        TileSourcePolicy.FLAG_NO_BULK or
+            TileSourcePolicy.FLAG_NO_PREVENTIVE or
+            TileSourcePolicy.FLAG_USER_AGENT_MEANINGFUL
+    )
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Configuration.getInstance().apply {
             load(applicationContext, getSharedPreferences("osmdroid", MODE_PRIVATE))
-            userAgentValue = "SanpoRoad/1.0 (https://github.com/tanuki276/SANPO-ROAD)"
+            // OSM requires an identifiable application User-Agent. This value is used by the
+            // custom tile source above instead of osmdroid's generic/normalized value.
+            userAgentValue = "SANPO-ROAD/${BuildConfig.VERSION_NAME} (+https://github.com/tanuki276)"
         }
         setContent { SanpoRoadApp() }
     }
@@ -142,10 +168,17 @@ fun MapRecordScreen(
     val fallbackCenter = remember { GeoPoint(36.2048, 138.2529) }
     val mapView = remember {
         MapView(context).apply {
-            setTileSource(TileSourceFactory.MAPNIK)
+            setTileSource(SANPO_OSM_TILE_SOURCE)
             setMultiTouchControls(true)
             controller.setZoom(6.0)
             controller.setCenter(fallbackCenter)
+        }
+    }
+    val copyrightOverlay = remember {
+        CopyrightOverlay(context).apply {
+            setAlignBottom(true)
+            setAlignRight(false)
+            setOffset(12, 12)
         }
     }
 
@@ -226,7 +259,7 @@ fun MapRecordScreen(
     val poly = if (showingRecordedSession) points.map { GeoPoint(it.lat, it.lng) }
     else restoredRoute.points.map { GeoPoint(it.lat, it.lng) }
 
-    DisposableEffect(points, restoredRoute, recording, pending, current) {
+    DisposableEffect(points, restoredRoute, recording, pending, current, copyrightOverlay) {
         mapView.overlays.clear()
         if (poly.size >= 2) mapView.overlays.add(Polyline().apply { setPoints(poly); width = 10f })
         current?.let { p ->
@@ -236,6 +269,8 @@ fun MapRecordScreen(
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             })
         }
+        // OSM requires visible attribution on the map.
+        mapView.overlays.add(copyrightOverlay)
         mapView.invalidate()
         onDispose { }
     }
