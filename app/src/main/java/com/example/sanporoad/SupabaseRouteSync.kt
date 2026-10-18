@@ -49,6 +49,7 @@ object SupabaseRouteSync {
         client.storage[PHOTO_BUCKET].createSignedUrl(objectPath, 1.hours)
     }.getOrNull()
 
+    // Sharing uses the dedicated share RPC; route/photo sync still uses authenticated RLS.
     suspend fun createShareLink(route: SavedRoute): Result<String> = runCatching {
         val token = client.postgrest.rpc(
             function = "create_sanpo_share",
