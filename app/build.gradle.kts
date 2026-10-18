@@ -14,6 +14,9 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+
+        buildConfigField("String", "SUPABASE_URL", "\"https://clidwzzqdofoizaxwbzo.supabase.co\"")
+        buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_VLvDV8FqnNwzp3gYV-uEhQ_DgSJv_WZ\"")
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
@@ -22,7 +25,10 @@ android {
     kotlinOptions {
         jvmTarget = "21"
     }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
 
@@ -37,5 +43,11 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("org.osmdroid:osmdroid-android:6.1.20")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+
+    // supabase-kt 3.0.1 is compatible with the project's Kotlin 2.0.21 toolchain.
+    implementation("io.github.jan-tennert.supabase:auth-kt:3.0.1")
+    implementation("io.github.jan-tennert.supabase:postgrest-kt:3.0.1")
+    implementation("io.ktor:ktor-client-android:3.0.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling:1.7.8")
 }
