@@ -1,5 +1,6 @@
 package com.example.sanporoad
 
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -8,7 +9,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -38,6 +41,9 @@ fun WalkInsightsScreen(
                 goalMeters = weeklyGoalMeters,
                 onEdit = { goalDialog = true }
             )
+        }
+        routes.firstOrNull()?.let { latest ->
+            item { ShareLatestWalkCard(latest) }
         }
         item { WeeklyChart(weeks) }
         item {
@@ -69,6 +75,83 @@ fun WalkInsightsScreen(
                 onWeeklyGoalChange(it)
                 goalDialog = false
             }
+        )
+    }
+}
+
+@Composable
+private fun ShareLatestWalkCard(route: SavedRoute) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var confirm by remember(route.id) { mutableStateOf(false) }
+    var sharing by remember(route.id) { mutableStateOf(false) }
+    var error by remember(route.id) { mutableStateOf<String?>(null) }
+
+    Card(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().padding(14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("最新の散歩を共有", style = MaterialTheme.typography.titleMedium)
+                Text(route.name, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "${fmtKm(route.distanceMeters)} ・ ${fmtDuration(route.durationMs)}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            TextButton(onClick = { confirm = true }, enabled = !sharing) {
+                Text(if (sharing) "生成中…" else "リンク生成")
+            }
+        }
+    }
+
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text("散歩結果を共有") },
+            text = {
+                Text(
+                    "共有リンクには散歩ルート・距離・時間・メモが含まれます。" +
+                        "写真は共有されません。リンクを知っている人は閲覧できます。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = false
+                    sharing = true
+                    scope.launch {
+                        SupabaseRouteSync.createShareLink(route)
+                            .onSuccess { url ->
+                                val text = buildString {
+                                    appendLine(route.name)
+                                    appendLine("${fmtKm(route.distanceMeters)} / ${fmtDuration(route.durationMs)}")
+                                    append(url)
+                                }
+                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, text)
+                                }
+                                context.startActivity(Intent.createChooser(intent, "散歩結果を共有"))
+                            }
+                            .onFailure {
+                                error = "共有リンクを作成できませんでした。通信状態を確認してもう一度お試しください。"
+                            }
+                        sharing = false
+                    }
+                }) { Text("リンクを作って共有") }
+            },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text("キャンセル") } }
+        )
+    }
+
+    error?.let { message ->
+        AlertDialog(
+            onDismissRequest = { error = null },
+            title = { Text("共有できませんでした") },
+            text = { Text(message) },
+            confirmButton = { TextButton(onClick = { error = null }) { Text("OK") } }
         )
     }
 }
