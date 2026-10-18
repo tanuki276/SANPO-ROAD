@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.location.Location
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -20,15 +21,20 @@ import kotlin.math.*
 
 class LocationTrackingService : Service() {
     private val fused by lazy { LocationServices.getFusedLocationProviderClient(this) }
+
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
-            result.lastLocation?.let { loc ->
-                val now = System.currentTimeMillis()
-                if (now - loc.time <= MAX_LOCATION_AGE_MS && (loc.hasAccuracy() && loc.accuracy <= MAX_ACCEPTED_ACCURACY_M || !loc.hasAccuracy())) {
-                    addPoint(LatLngPoint(loc.latitude, loc.longitude, now))
-                    updateNotification()
-                }
-            }
+            val loc = result.lastLocation ?: return
+            val now = System.currentTimeMillis()
+            val accuracy = if (loc.hasAccuracy()) loc.accuracy else Float.MAX_VALUE
+            put(this@LocationTrackingService, KEY_LAST_ACCURACY, accuracy.toDouble())
+
+            if (now - loc.time > MAX_LOCATION_AGE_MS) return
+            if (!loc.hasAccuracy() || accuracy > MAX_ACCEPTED_ACCURACY_M) return
+            if (loc.hasSpeed() && loc.speed > MAX_REPORTED_SPEED_MPS) return
+
+            addFilteredLocation(loc, now)
+            updateNotification()
         }
     }
 
@@ -54,12 +60,13 @@ class LocationTrackingService : Service() {
             put(this, KEY_STOPPED_AT, 0L)
             put(this, KEY_POINTS, "[]")
             put(this, KEY_DISTANCE, 0.0)
+            put(this, KEY_LAST_ACCURACY, -1.0)
         }
 
         startForeground(NOTIFICATION_ID, buildNotification())
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1500L)
-            .setMinUpdateIntervalMillis(750L)
-            .setMaxUpdateDelayMillis(3000L)
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L)
+            .setMinUpdateIntervalMillis(1000L)
+            .setMaxUpdateDelayMillis(4000L)
             .setWaitForAccurateLocation(true)
             .build()
         try {
@@ -92,27 +99,62 @@ class LocationTrackingService : Service() {
         super.onDestroy()
     }
 
-    private fun addPoint(point: LatLngPoint) {
+    private fun addFilteredLocation(loc: Location, now: Long) {
         val points = getPoints(this).toMutableList()
+        val candidate = LatLngPoint(loc.latitude, loc.longitude, now, loc.accuracy)
         val previous = points.lastOrNull()
-        var distance = getDistanceMeters(this)
-        if (previous != null) {
-            val segment = haversine(GeoPoint(previous.lat, previous.lng), GeoPoint(point.lat, point.lng))
-            if (segment > MAX_SEGMENT_METERS) return
-            distance += segment
+
+        if (previous == null) {
+            // The very first fix is accepted only when reasonably accurate. This prevents the
+            // common startup "jump" from a coarse cached position to the real position.
+            if (loc.accuracy <= FIRST_FIX_MAX_ACCURACY_M) {
+                points += candidate
+                persistPoints(points, 0.0)
+            }
+            return
         }
-        points += point
+
+        val dtSeconds = ((candidate.timeMs - previous.timeMs).coerceAtLeast(1L)) / 1000.0
+        val segment = haversine(
+            GeoPoint(previous.lat, previous.lng),
+            GeoPoint(candidate.lat, candidate.lng)
+        )
+        val previousAccuracy = previous.accuracyM?.toDouble() ?: loc.accuracy.toDouble()
+        val accuracyNoise = max(previousAccuracy, loc.accuracy.toDouble())
+
+        // GPS naturally wanders while standing still. Movement smaller than the expected noise
+        // radius is ignored completely instead of inflating the walk distance.
+        val minimumMovement = max(MIN_MOVEMENT_METERS, accuracyNoise * NOISE_RADIUS_FACTOR)
+        if (segment < minimumMovement) return
+
+        val calculatedSpeed = segment / dtSeconds
+        if (calculatedSpeed > MAX_CALCULATED_SPEED_MPS) return
+
+        // Reject sudden jumps that are much larger than both fixes' accuracy envelopes.
+        val plausibleJump = max(MAX_NORMAL_SEGMENT_METERS, (previousAccuracy + loc.accuracy) * JUMP_ACCURACY_FACTOR)
+        if (segment > plausibleJump) return
+
+        val newDistance = getDistanceMeters(this) + segment
+        points += candidate
+        persistPoints(points, newDistance)
+    }
+
+    private fun persistPoints(points: List<LatLngPoint>, distance: Double) {
         put(this, KEY_POINTS, JsonConfig.encodeToString(ListSerializer(LatLngPoint.serializer()), points))
         put(this, KEY_DISTANCE, distance)
     }
 
-    private fun buildNotification(): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-        .setContentTitle("サンポロード")
-        .setContentText("散歩を記録中…")
-        .setOngoing(true)
-        .setCategory(NotificationCompat.CATEGORY_SERVICE)
-        .build()
+    private fun buildNotification(): Notification {
+        val accuracy = getLastAccuracyMeters(this)
+        val suffix = if (accuracy > 0) " / GPS ±${accuracy.roundToInt()}m" else ""
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setContentTitle("サンポロード")
+            .setContentText("散歩を記録中…$suffix")
+            .setOngoing(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .build()
+    }
 
     private fun updateNotification() {
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
@@ -138,9 +180,18 @@ class LocationTrackingService : Service() {
         private const val KEY_STOPPED_AT = "stoppedAt"
         private const val KEY_POINTS = "points"
         private const val KEY_DISTANCE = "distance"
-        private const val MAX_LOCATION_AGE_MS = 10_000L
-        private const val MAX_ACCEPTED_ACCURACY_M = 35f
-        private const val MAX_SEGMENT_METERS = 100f
+        private const val KEY_LAST_ACCURACY = "lastAccuracy"
+
+        private const val MAX_LOCATION_AGE_MS = 8_000L
+        private const val MAX_ACCEPTED_ACCURACY_M = 25f
+        private const val FIRST_FIX_MAX_ACCURACY_M = 18f
+        private const val MIN_MOVEMENT_METERS = 4.0
+        private const val NOISE_RADIUS_FACTOR = 0.65
+        private const val MAX_CALCULATED_SPEED_MPS = 5.5 // 19.8 km/h: fast running, above normal walking
+        private const val MAX_REPORTED_SPEED_MPS = 6.0f
+        private const val MAX_NORMAL_SEGMENT_METERS = 45.0
+        private const val JUMP_ACCURACY_FACTOR = 1.8
+
         const val ACTION_START = "com.example.sanporoad.START"
         const val ACTION_STOP = "com.example.sanporoad.STOP"
 
@@ -174,6 +225,10 @@ class LocationTrackingService : Service() {
                 ?: prefs(context).getFloat(KEY_DISTANCE, 0f).toDouble()
         }.getOrDefault(0.0)
 
+        fun getLastAccuracyMeters(context: Context): Double = runCatching {
+            prefs(context).getString(KEY_LAST_ACCURACY, null)?.toDouble() ?: -1.0
+        }.getOrDefault(-1.0)
+
         fun getPoints(context: Context): List<LatLngPoint> = runCatching {
             JsonConfig.decodeFromString<List<LatLngPoint>>(prefs(context).getString(KEY_POINTS, "[]") ?: "[]")
         }.getOrDefault(emptyList())
@@ -186,6 +241,7 @@ class LocationTrackingService : Service() {
                 .remove(KEY_DISTANCE)
                 .remove(KEY_STARTED_AT)
                 .remove(KEY_STOPPED_AT)
+                .remove(KEY_LAST_ACCURACY)
                 .apply()
         }
 
