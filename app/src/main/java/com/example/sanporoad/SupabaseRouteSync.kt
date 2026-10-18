@@ -11,6 +11,7 @@ import io.github.jan.supabase.storage.storage
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.time.Instant
+import java.util.UUID
 import kotlin.time.Duration.Companion.hours
 
 object SupabaseRouteSync {
@@ -48,10 +49,25 @@ object SupabaseRouteSync {
         client.storage[PHOTO_BUCKET].createSignedUrl(objectPath, 1.hours)
     }.getOrNull()
 
-    suspend fun currentAccessToken(): String {
-        ensureUserId()
-        return client.auth.currentSessionOrNull()?.accessToken
-            ?: error("Supabase session is unavailable")
+    suspend fun createShareLink(route: SavedRoute): Result<String> = runCatching {
+        val userId = ensureUserId()
+        val token = UUID.randomUUID().toString().replace("-", "")
+        client.from("sanpo_shares").upsert(
+            RemoteShare(
+                token = token,
+                ownerId = userId,
+                routeLocalId = route.id,
+                name = route.name,
+                startedAt = Instant.ofEpochMilli(route.startedAt).toString(),
+                durationMs = route.durationMs,
+                distanceMeters = route.distanceMeters,
+                points = route.points,
+                note = route.note
+            )
+        ) {
+            onConflict = "owner_id,route_local_id"
+        }
+        BuildConfig.SHARE_API_URL.removeSuffix("/api/share") + "/s/$token"
     }
 
     private suspend fun uploadPhotoIfNeeded(route: SavedRoute, userId: String): String? {
@@ -115,3 +131,16 @@ private data class RemoteRoute(
         )
     }.getOrNull()
 }
+
+@Serializable
+private data class RemoteShare(
+    val token: String,
+    @SerialName("owner_id") val ownerId: String,
+    @SerialName("route_local_id") val routeLocalId: Long,
+    val name: String,
+    @SerialName("started_at") val startedAt: String,
+    @SerialName("duration_ms") val durationMs: Long,
+    @SerialName("distance_meters") val distanceMeters: Double,
+    val points: List<LatLngPoint>,
+    val note: String
+)
