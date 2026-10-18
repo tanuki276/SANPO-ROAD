@@ -23,7 +23,6 @@ class LocationTrackingService : Service() {
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             result.lastLocation?.let { loc ->
-                // Reject obviously stale fixes and very low-quality readings.
                 val now = System.currentTimeMillis()
                 if (now - loc.time <= MAX_LOCATION_AGE_MS && (loc.hasAccuracy() && loc.accuracy <= MAX_ACCEPTED_ACCURACY_M || !loc.hasAccuracy())) {
                     addPoint(LatLngPoint(loc.latitude, loc.longitude, now))
@@ -52,9 +51,11 @@ class LocationTrackingService : Service() {
             put(this, KEY_RECORDING, true)
             put(this, KEY_PENDING, false)
             put(this, KEY_STARTED_AT, System.currentTimeMillis())
+            put(this, KEY_STOPPED_AT, 0L)
             put(this, KEY_POINTS, "[]")
             put(this, KEY_DISTANCE, 0.0)
         }
+
         startForeground(NOTIFICATION_ID, buildNotification())
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1500L)
             .setMinUpdateIntervalMillis(750L)
@@ -65,14 +66,23 @@ class LocationTrackingService : Service() {
             fused.requestLocationUpdates(request, callback, mainLooper)
         } catch (_: SecurityException) {
             put(this, KEY_RECORDING, false)
+            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
     }
 
     private fun stopTracking() {
+        val wasRecording = isRecording(this)
         fused.removeLocationUpdates(callback)
-        put(this, KEY_RECORDING, false)
-        put(this, KEY_PENDING, true)
+
+        if (wasRecording) {
+            put(this, KEY_STOPPED_AT, System.currentTimeMillis())
+            put(this, KEY_RECORDING, false)
+            put(this, KEY_PENDING, true)
+        } else {
+            put(this, KEY_RECORDING, false)
+        }
+
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -125,6 +135,7 @@ class LocationTrackingService : Service() {
         private const val KEY_RECORDING = "recording"
         private const val KEY_PENDING = "pending"
         private const val KEY_STARTED_AT = "startedAt"
+        private const val KEY_STOPPED_AT = "stoppedAt"
         private const val KEY_POINTS = "points"
         private const val KEY_DISTANCE = "distance"
         private const val MAX_LOCATION_AGE_MS = 10_000L
@@ -145,19 +156,41 @@ class LocationTrackingService : Service() {
         fun isRecording(context: Context) = prefs(context).getBoolean(KEY_RECORDING, false)
         fun hasPendingRecording(context: Context) = prefs(context).getBoolean(KEY_PENDING, false)
         fun getStartedAt(context: Context) = prefs(context).getLong(KEY_STARTED_AT, 0L)
+        fun getStoppedAt(context: Context) = prefs(context).getLong(KEY_STOPPED_AT, 0L)
+
+        fun getDurationMs(context: Context): Long {
+            val startedAt = getStartedAt(context)
+            if (startedAt <= 0L) return 0L
+            val end = if (isRecording(context)) {
+                System.currentTimeMillis()
+            } else {
+                getStoppedAt(context).takeIf { it >= startedAt } ?: startedAt
+            }
+            return (end - startedAt).coerceAtLeast(0L)
+        }
+
         fun getDistanceMeters(context: Context): Double = runCatching {
             prefs(context).getString(KEY_DISTANCE, null)?.toDouble()
                 ?: prefs(context).getFloat(KEY_DISTANCE, 0f).toDouble()
         }.getOrDefault(0.0)
+
         fun getPoints(context: Context): List<LatLngPoint> = runCatching {
             JsonConfig.decodeFromString<List<LatLngPoint>>(prefs(context).getString(KEY_POINTS, "[]") ?: "[]")
         }.getOrDefault(emptyList())
 
         fun clearPending(context: Context) {
-            prefs(context).edit().putBoolean(KEY_PENDING, false).putBoolean(KEY_RECORDING, false).remove(KEY_POINTS).remove(KEY_DISTANCE).remove(KEY_STARTED_AT).apply()
+            prefs(context).edit()
+                .putBoolean(KEY_PENDING, false)
+                .putBoolean(KEY_RECORDING, false)
+                .remove(KEY_POINTS)
+                .remove(KEY_DISTANCE)
+                .remove(KEY_STARTED_AT)
+                .remove(KEY_STOPPED_AT)
+                .apply()
         }
 
         private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
         private fun put(context: Context, key: String, value: Any) {
             val edit = prefs(context).edit()
             when (value) {
