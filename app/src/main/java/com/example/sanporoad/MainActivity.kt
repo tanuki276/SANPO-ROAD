@@ -33,13 +33,8 @@ import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.roundToInt
 
-/**
- * Use the OSM standard tile endpoint, but do not use TileSourceFactory.MAPNIK here.
- * MAPNIK's policy forces osmdroid's normalized user agent (package/version), which hides the
- * explicit app/contact user agent configured below. A distinct source name also avoids reusing
- * any previously cached 403 "Access blocked" tiles stored under the old "Mapnik" cache key.
- */
 private val SANPO_OSM_TILE_SOURCE = XYTileSource(
     "SanpoRoadOSM-v2",
     0,
@@ -61,8 +56,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Configuration.getInstance().apply {
             load(applicationContext, getSharedPreferences("osmdroid", MODE_PRIVATE))
-            // OSM requires an identifiable application User-Agent. This value is used by the
-            // custom tile source above instead of osmdroid's generic/normalized value.
             userAgentValue = "SANPO-ROAD/${BuildConfig.VERSION_NAME} (+https://github.com/tanuki276)"
         }
         setContent { SanpoRoadApp() }
@@ -81,6 +74,9 @@ fun SanpoRoadApp() {
     var selectedRoute by remember { mutableStateOf<SavedRoute?>(null) }
     var syncVersion by remember { mutableIntStateOf(0) }
     var syncStatus by remember { mutableStateOf("ローカル保存") }
+
+    val routes = remember(syncVersion) { store.getAll() }
+    val gameProgress = remember(syncVersion) { WalkingGame.progress(routes) }
 
     LaunchedEffect(Unit) {
         syncStatus = "同期中…"
@@ -114,9 +110,10 @@ fun SanpoRoadApp() {
             }
         ) { padding ->
             Column(Modifier.padding(padding).fillMaxSize()) {
+                GameProgressCard(gameProgress)
+
                 if (showSaved) {
-                    val savedRoutes = remember(syncVersion, showSaved) { store.getAll() }
-                    SavedRoutesScreen(savedRoutes) { route ->
+                    SavedRoutesScreen(routes) { route ->
                         selectedRoute = route
                         showSaved = false
                     }
@@ -125,7 +122,6 @@ fun SanpoRoadApp() {
                         restoredRoute = selectedRoute,
                         onClearRestoredRoute = { selectedRoute = null },
                         onSave = { route ->
-                            // Local-first: persist immediately, then attempt cloud sync.
                             store.save(route)
                             selectedRoute = route
                             syncVersion++
@@ -153,6 +149,40 @@ fun SanpoRoadApp() {
             TextButton(onClick = { showLogin = false }) { Text("閉じる") }
         }
     )
+}
+
+@Composable
+private fun GameProgressCard(progress: GameProgress) {
+    val completed = progress.missions.count { it.complete }
+    val nextMission = progress.missions.firstOrNull { !it.complete }
+
+    Card(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Lv.${progress.level}  ✨ ${progress.totalXp} XP", style = MaterialTheme.typography.titleSmall)
+                Text("🔥 ${progress.streakDays}日  🏅 ${progress.badges.size}", style = MaterialTheme.typography.labelLarge)
+            }
+            Spacer(Modifier.height(5.dp))
+            LinearProgressIndicator(
+                progress = progress.levelFraction,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (nextMission == null) "デイリー達成！ 3/3 🎉"
+                else "デイリー $completed/3 ・ 次: ${nextMission.title}",
+                style = MaterialTheme.typography.labelMedium
+            )
+        }
+    }
 }
 
 @Composable
@@ -187,6 +217,7 @@ fun MapRecordScreen(
     var startedAt by remember { mutableLongStateOf(LocationTrackingService.getStartedAt(context)) }
     var distance by remember { mutableDoubleStateOf(LocationTrackingService.getDistanceMeters(context)) }
     var durationMs by remember { mutableLongStateOf(LocationTrackingService.getDurationMs(context)) }
+    var gpsAccuracy by remember { mutableDoubleStateOf(LocationTrackingService.getLastAccuracyMeters(context)) }
     var showName by remember { mutableStateOf(LocationTrackingService.hasPendingRecording(context)) }
     var routeName by remember { mutableStateOf("") }
     var current by remember { mutableStateOf<GeoPoint?>(null) }
@@ -244,6 +275,7 @@ fun MapRecordScreen(
             startedAt = LocationTrackingService.getStartedAt(context)
             distance = LocationTrackingService.getDistanceMeters(context)
             durationMs = LocationTrackingService.getDurationMs(context)
+            gpsAccuracy = LocationTrackingService.getLastAccuracyMeters(context)
             statePoints.lastOrNull()?.let {
                 val p = GeoPoint(it.lat, it.lng)
                 current = p
@@ -269,7 +301,6 @@ fun MapRecordScreen(
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             })
         }
-        // OSM requires visible attribution on the map.
         mapView.overlays.add(copyrightOverlay)
         mapView.invalidate()
         onDispose { }
@@ -286,6 +317,22 @@ fun MapRecordScreen(
 
     Column(Modifier.fillMaxSize()) {
         AndroidView(factory = { mapView }, modifier = Modifier.weight(1f).fillMaxWidth())
+
+        if (recording || pending) {
+            val gpsText = when {
+                gpsAccuracy <= 0 -> "📡 GPS探索中"
+                gpsAccuracy <= 10 -> "🟢 GPS良好 ±${gpsAccuracy.roundToInt()}m"
+                gpsAccuracy <= 20 -> "🟡 GPS普通 ±${gpsAccuracy.roundToInt()}m"
+                else -> "🔴 GPS不安定 ±${gpsAccuracy.roundToInt()}m"
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(gpsText, style = MaterialTheme.typography.labelMedium)
+                Text("✨ +${WalkingGame.pendingXp(distance, durationMs)} XP予定", style = MaterialTheme.typography.labelMedium)
+            }
+        }
 
         if (poly.isNotEmpty()) {
             val shownDistance = if (showingRecordedSession) distance else restoredRoute?.distanceMeters ?: 0.0
@@ -321,26 +368,30 @@ fun MapRecordScreen(
                 },
                 modifier = Modifier.weight(1f),
                 enabled = !pending
-            ) { Text(if (recording) "停止" else if (pending) "保存待ち" else "記録開始") }
+            ) { Text(if (recording) "停止" else if (pending) "保存待ち" else "冒険開始") }
 
             OutlinedButton(
                 onClick = onShowSaved,
                 modifier = Modifier.weight(1f),
                 enabled = !recording && !pending
-            ) { Text("保存コース") }
+            ) { Text("冒険ログ") }
         }
     }
 
     if (showName && pending) AlertDialog(
         onDismissRequest = { },
-        title = { Text("コースを保存") },
+        title = { Text("冒険を記録") },
         text = {
-            OutlinedTextField(
-                value = routeName,
-                onValueChange = { routeName = it },
-                label = { Text("コース名") },
-                singleLine = true
-            )
+            Column {
+                Text("獲得予定: ${WalkingGame.pendingXp(distance, durationMs)} XP")
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = routeName,
+                    onValueChange = { routeName = it },
+                    label = { Text("コース名") },
+                    singleLine = true
+                )
+            }
         },
         confirmButton = {
             TextButton(onClick = {
@@ -358,9 +409,10 @@ fun MapRecordScreen(
                 points = emptyList()
                 distance = 0.0
                 durationMs = 0L
+                gpsAccuracy = -1.0
                 routeName = ""
                 showName = false
-            }) { Text("保存") }
+            }) { Text("記録してXP獲得") }
         },
         dismissButton = {
             TextButton(onClick = {
@@ -368,6 +420,7 @@ fun MapRecordScreen(
                 points = emptyList()
                 distance = 0.0
                 durationMs = 0L
+                gpsAccuracy = -1.0
                 routeName = ""
                 showName = false
             }) { Text("破棄") }
@@ -387,15 +440,23 @@ private fun formatDuration(durationMs: Long): String {
 @Composable
 fun SavedRoutesScreen(routes: List<SavedRoute>, onSelect: (SavedRoute) -> Unit) {
     if (routes.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("保存したコースはありません")
+        Text("冒険ログはまだありません")
     } else LazyColumn(Modifier.fillMaxSize()) {
         items(routes) { route ->
             ListItem(
                 headlineContent = { Text(route.name) },
                 supportingContent = {
-                    Text(String.format(Locale.JAPAN, "%.2f km / %s / %d地点", route.distanceMeters / 1000.0, formatDuration(route.durationMs), route.points.size))
+                    Text(
+                        String.format(
+                            Locale.JAPAN,
+                            "%.2f km / %s / +%d XP",
+                            route.distanceMeters / 1000.0,
+                            formatDuration(route.durationMs),
+                            WalkingGame.pendingXp(route.distanceMeters, route.durationMs)
+                        )
+                    )
                 },
-                leadingContent = { Text("🚶") },
+                leadingContent = { Text("🗺️") },
                 trailingContent = { TextButton(onClick = { onSelect(route) }) { Text("地図") } }
             )
             HorizontalDivider()
