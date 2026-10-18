@@ -48,6 +48,12 @@ object SupabaseRouteSync {
         client.storage[PHOTO_BUCKET].createSignedUrl(objectPath, 1.hours)
     }.getOrNull()
 
+    suspend fun currentAccessToken(): String {
+        ensureUserId()
+        return client.auth.currentSessionOrNull()?.accessToken
+            ?: error("Supabase session is unavailable")
+    }
+
     private suspend fun uploadPhotoIfNeeded(route: SavedRoute, userId: String): String? {
         val local = PhotoStore.localFile(route.photoPath)
         if (local == null) return route.photoObjectPath
