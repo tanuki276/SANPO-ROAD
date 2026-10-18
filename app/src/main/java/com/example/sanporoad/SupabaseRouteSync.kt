@@ -6,11 +6,17 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.from
+import io.github.jan.supabase.storage.Storage
+import io.github.jan.supabase.storage.storage
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import java.io.File
 import java.time.Instant
+import kotlin.time.Duration.Companion.hours
 
 object SupabaseRouteSync {
+    private const val PHOTO_BUCKET = "walk-photos"
+
     private val client: SupabaseClient by lazy {
         createSupabaseClient(
             supabaseUrl = BuildConfig.SUPABASE_URL,
@@ -18,12 +24,14 @@ object SupabaseRouteSync {
         ) {
             install(Auth)
             install(Postgrest)
+            install(Storage)
         }
     }
 
     suspend fun push(route: SavedRoute): Result<Unit> = runCatching {
         val userId = ensureUserId()
-        client.from("sanpo_routes").upsert(route.toRemote(userId)) {
+        val photoObjectPath = uploadPhotoIfNeeded(route, userId)
+        client.from("sanpo_routes").upsert(route.toRemote(userId, photoObjectPath)) {
             onConflict = "user_id,local_id"
         }
     }
@@ -36,6 +44,25 @@ object SupabaseRouteSync {
             .mapNotNull { it.toLocalOrNull() }
     }
 
+    suspend fun signedPhotoUrl(objectPath: String): String? = runCatching {
+        ensureUserId()
+        client.storage[PHOTO_BUCKET].createSignedUrl(objectPath, 1.hours)
+    }.getOrNull()
+
+    private suspend fun uploadPhotoIfNeeded(route: SavedRoute, userId: String): String? {
+        val local = PhotoStore.localFile(route.photoPath)
+        if (local == null) return route.photoObjectPath
+
+        val ext = local.extension.ifBlank { "jpg" }
+        val objectPath = "$userId/${route.id}.$ext"
+        client.storage[PHOTO_BUCKET].upload(
+            path = objectPath,
+            data = local.readBytes(),
+            upsert = true
+        )
+        return objectPath
+    }
+
     private suspend fun ensureUserId(): String {
         client.auth.currentUserOrNull()?.let { return it.id }
         client.auth.signInAnonymously()
@@ -43,7 +70,7 @@ object SupabaseRouteSync {
             ?: error("Supabase anonymous sign-in did not create a user")
     }
 
-    private fun SavedRoute.toRemote(userId: String) = RemoteRoute(
+    private fun SavedRoute.toRemote(userId: String, syncedPhotoPath: String?) = RemoteRoute(
         userId = userId,
         localId = id,
         name = name,
@@ -51,7 +78,8 @@ object SupabaseRouteSync {
         durationMs = durationMs,
         distanceMeters = distanceMeters,
         points = points,
-        note = note
+        note = note,
+        photoObjectPath = syncedPhotoPath
     )
 }
 
@@ -64,7 +92,8 @@ private data class RemoteRoute(
     @SerialName("duration_ms") val durationMs: Long,
     @SerialName("distance_meters") val distanceMeters: Double,
     val points: List<LatLngPoint>,
-    val note: String = ""
+    val note: String = "",
+    @SerialName("photo_object_path") val photoObjectPath: String? = null
 ) {
     fun toLocalOrNull(): SavedRoute? = runCatching {
         SavedRoute(
@@ -74,7 +103,9 @@ private data class RemoteRoute(
             durationMs = durationMs,
             distanceMeters = distanceMeters,
             points = points,
-            note = note
+            note = note,
+            photoPath = null,
+            photoObjectPath = photoObjectPath
         )
     }.getOrNull()
 }
