@@ -23,7 +23,20 @@ class RouteStore(context: Context) {
     fun merge(routes: List<SavedRoute>) {
         if (routes.isEmpty()) return
         val merged = readAll().associateBy { it.id }.toMutableMap()
-        routes.forEach { merged[it.id] = it }
+        routes.forEach { remote ->
+            val local = merged[remote.id]
+            merged[remote.id] = if (local != null) {
+                // Cloud rows intentionally don't carry a device-local file path. Keep the local
+                // photo so the walk remains viewable offline, while adopting the remote object path
+                // for cloud-backed display when this device has no local copy.
+                remote.copy(
+                    photoPath = local.photoPath ?: remote.photoPath,
+                    photoObjectPath = remote.photoObjectPath ?: local.photoObjectPath
+                )
+            } else {
+                remote
+            }
+        }
         writeAll(merged.values.toList())
     }
 
