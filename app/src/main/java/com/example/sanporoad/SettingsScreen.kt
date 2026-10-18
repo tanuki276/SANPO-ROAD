@@ -21,9 +21,6 @@ import kotlinx.coroutines.withContext
 fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncStatus: String, onChanged: () -> Unit, onSync: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var email by rememberSaveable { mutableStateOf("") }
-    var otp by remember { mutableStateOf("") }
-    var sentTo by rememberSaveable { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var refresh by remember { mutableIntStateOf(0) }
@@ -86,24 +83,13 @@ fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncS
         item {
             SettingsCard("任意ログイン") {
                 if (account == null) {
-                    Text("同じメールでログインすると、同期した散歩を新しい端末で復元できます。ログインだけでは同期はONになりません。")
-                    OutlinedTextField(email, { email = it.take(254) }, label = { Text("メールアドレス") }, singleLine = true, enabled = !busy && sentTo == null)
-                    Button(enabled = !busy && !recording && email.contains('@') && sentTo == null, onClick = { action {
-                        val address = email.trim(); SupabaseRouteSync.requestOtp(address)
-                        sentTo = address; message = "メールの確認コードを入力してください。"
-                    } }) { Text("確認コードを送る") }
-                    if (sentTo != null) {
-                        OutlinedTextField(otp, { otp = it.filter(Char::isDigit).take(10) }, label = { Text("確認コード") }, singleLine = true, enabled = !busy)
-                        Button(enabled = !busy && !recording && otp.length >= 6, onClick = { action {
-                            val address = sentTo!!
-                            val id = SupabaseRouteSync.verifyOtp(address, otp)
-                            preferences.cloudSync = false; preferences.activeAccountId = id; preferences.accountEmail = address
-                            otp = ""; sentTo = null; message = "ログインしました。復元するにはクラウド同期をONにしてください。"
-                        } }) { Text("ログイン") }
-                        TextButton(enabled = !busy, onClick = { sentTo = null; otp = "" }) { Text("メールを変更・再送") }
-                    }
+                    Text("Googleアカウントでログインすると、同期した散歩を新しい端末で復元できます。ログインだけでは同期はONになりません。")
+                    Button(enabled = !busy && !recording, onClick = { action {
+                        SupabaseRouteSync.signInWithGoogle()
+                        message = "Googleでログインしてください。完了するとアプリに戻ります。"
+                    } }) { Text("Googleでログイン") }
                 } else {
-                    Text(preferences.accountEmail ?: "ログイン済み")
+                    Text(preferences.accountEmail ?: "Googleでログイン済み")
                     Text("ログアウトすると、このアカウントの端末内記録は非表示になります。再ログインすると表示されます。")
                     OutlinedButton(enabled = !busy && !recording, onClick = { confirmation = "logout" }) { Text("ログアウト") }
                     TextButton(enabled = !busy && !recording, onClick = { confirmation = "account" }) { Text("アカウントを削除", color = MaterialTheme.colorScheme.error) }
@@ -146,7 +132,7 @@ fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncS
             SettingsCard("送信する情報") {
                 Text("端末のみ保存：散歩の座標・日時・名前・メモ・写真はアプリ内に保存します。Androidの自動バックアップと端末間転送から除外します。")
                 Text("地図：OpenStreetMapへの地図タイル要求にIPアドレスと表示地域が含まれます。GPS取得には端末の位置情報サービスを使います。")
-                Text("ログイン：メールと確認コードをSupabase Authへ送信します。クラウド同期ON：座標・日時・距離・メモ等をSupabaseへ保存します。写真同期ON：写真を非公開ストレージへ保存します。")
+                Text("ログイン：Googleの認証画面を開き、認証結果をSupabase Authへ送信します。クラウド同期ON：座標・日時・距離・メモ等をSupabaseへ保存します。写真同期ON：写真を非公開ストレージへ保存します。")
                 Text("共有：確認した名前・日時・距離・時間・メモをサーバーへ送り、リンク先で公開します。地図ありのときだけ座標も含みます。写真は公開しません。")
                 Text("同期OFFは送信済みデータの削除ではありません。記録削除は共有リンクと写真も対象です。通信できない場合のクラウド削除は次回同期時に再試行します。")
             }
@@ -171,7 +157,7 @@ fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncS
             confirmButton = { TextButton(onClick = {
                 confirmation = null
                 when (kind) {
-                    "sync" -> if (account == null) message = "先にメールでログインしてください。" else { preferences.cloudSync = true; refresh++; onChanged(); onSync() }
+                    "sync" -> if (account == null) message = "先にGoogleでログインしてください。" else { preferences.cloudSync = true; refresh++; onChanged(); onSync() }
                     "photos" -> { preferences.photoSync = true; refresh++; onChanged() }
                     "export" -> export.launch("sanpo-${System.currentTimeMillis()}.$exportFormat")
                     "logout" -> action {
