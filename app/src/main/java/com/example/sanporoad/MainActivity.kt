@@ -22,6 +22,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.android.gms.location.LocationServices
+import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
@@ -47,16 +48,35 @@ class MainActivity : ComponentActivity() {
 fun SanpoRoadApp() {
     val context = LocalContext.current
     val store = remember { RouteStore(context) }
+    val scope = rememberCoroutineScope()
     var loggedIn by remember { mutableStateOf(false) }
     var showLogin by remember { mutableStateOf(false) }
     var showSaved by remember { mutableStateOf(false) }
     var selectedRoute by remember { mutableStateOf<SavedRoute?>(null) }
+    var syncVersion by remember { mutableIntStateOf(0) }
+    var syncStatus by remember { mutableStateOf("ローカル保存") }
+
+    LaunchedEffect(Unit) {
+        syncStatus = "同期中…"
+        val result = store.syncAll()
+        syncVersion++
+        syncStatus = if (result.cloudAvailable) {
+            if (result.failedUploads == 0) "ローカル + Supabase" else "ローカル保存（一部同期待ち）"
+        } else {
+            "ローカル保存（オフライン）"
+        }
+    }
 
     Surface(Modifier.fillMaxSize()) {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("サンポロード") },
+                    title = {
+                        Column {
+                            Text("サンポロード")
+                            Text(syncStatus, style = MaterialTheme.typography.labelSmall)
+                        }
+                    },
                     actions = {
                         TextButton(onClick = {
                             if (loggedIn) loggedIn = false else showLogin = true
@@ -69,7 +89,8 @@ fun SanpoRoadApp() {
         ) { padding ->
             Column(Modifier.padding(padding).fillMaxSize()) {
                 if (showSaved) {
-                    SavedRoutesScreen(store.getAll()) { route ->
+                    val savedRoutes = remember(syncVersion, showSaved) { store.getAll() }
+                    SavedRoutesScreen(savedRoutes) { route ->
                         selectedRoute = route
                         showSaved = false
                     }
@@ -77,7 +98,17 @@ fun SanpoRoadApp() {
                     MapRecordScreen(
                         restoredRoute = selectedRoute,
                         onClearRestoredRoute = { selectedRoute = null },
-                        onSave = { route -> store.save(route); selectedRoute = route },
+                        onSave = { route ->
+                            // Local-first: persist immediately, then attempt cloud sync.
+                            store.save(route)
+                            selectedRoute = route
+                            syncVersion++
+                            scope.launch {
+                                syncStatus = "同期中…"
+                                val synced = store.syncRoute(route)
+                                syncStatus = if (synced) "ローカル + Supabase" else "ローカル保存（同期待ち）"
+                            }
+                        },
                         onShowSaved = { showSaved = true }
                     )
                 }
@@ -88,9 +119,9 @@ fun SanpoRoadApp() {
     if (showLogin) AlertDialog(
         onDismissRequest = { showLogin = false },
         title = { Text("アカウント") },
-        text = { Text("ゲスト利用できます。ログイン機能はローカルMVPとして実装しています。") },
+        text = { Text("散歩記録は端末に保存され、Supabaseへ匿名アカウントで同期されます。") },
         confirmButton = {
-            TextButton(onClick = { loggedIn = true; showLogin = false }) { Text("ログイン") }
+            TextButton(onClick = { loggedIn = true; showLogin = false }) { Text("OK") }
         },
         dismissButton = {
             TextButton(onClick = { showLogin = false }) { Text("閉じる") }
