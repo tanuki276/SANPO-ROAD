@@ -10,7 +10,6 @@ import io.github.jan.supabase.storage.Storage
 import io.github.jan.supabase.storage.storage
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import java.io.File
 import java.time.Instant
 import kotlin.time.Duration.Companion.hours
 
@@ -57,9 +56,10 @@ object SupabaseRouteSync {
         val objectPath = "$userId/${route.id}.$ext"
         client.storage[PHOTO_BUCKET].upload(
             path = objectPath,
-            data = local.readBytes(),
+            data = local.readBytes()
+        ) {
             upsert = true
-        )
+        }
         return objectPath
     }
 
