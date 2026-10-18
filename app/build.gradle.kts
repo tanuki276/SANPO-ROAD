@@ -15,8 +15,8 @@ android {
         versionCode = 1
         versionName = "1.0"
 
-        buildConfigField("String", "SUPABASE_URL", "\"https://clidwzzqdofoizaxwbzo.supabase.co\"")
-        buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_VLvDV8FqnNwzp3gYV-uEhQ_DgSJv_WZ\"")
+        buildConfigField("String", "SUPABASE_URL", "\"https://djkolanmyxvqmegqpvlp.supabase.co\"")
+        buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_BkB1dj8UPD9cxgpfhJT5IA__tEsmfoe\"")
         buildConfigField("String", "SHARE_API_URL", "\"https://sanpo-road-share.vercel.app/api/share\"")
     }
     compileOptions {
