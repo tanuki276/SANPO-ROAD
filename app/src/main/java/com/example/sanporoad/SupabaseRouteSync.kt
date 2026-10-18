@@ -11,11 +11,15 @@ import io.github.jan.supabase.storage.Storage
 import io.github.jan.supabase.storage.storage
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.time.Instant
 import kotlin.time.Duration.Companion.hours
 
 object SupabaseRouteSync {
     private const val PHOTO_BUCKET = "walk-photos"
+    private val json = Json { encodeDefaults = true }
 
     private val client: SupabaseClient by lazy {
         createSupabaseClient(
@@ -49,19 +53,19 @@ object SupabaseRouteSync {
         client.storage[PHOTO_BUCKET].createSignedUrl(objectPath, 1.hours)
     }.getOrNull()
 
-    // Sharing uses the dedicated share RPC; route/photo sync still uses authenticated RLS.
     suspend fun createShareLink(route: SavedRoute): Result<String> = runCatching {
+        val parameters = buildJsonObject {
+            put("p_route_local_id", route.id)
+            put("p_name", route.name)
+            put("p_started_at", Instant.ofEpochMilli(route.startedAt).toString())
+            put("p_duration_ms", route.durationMs)
+            put("p_distance_meters", route.distanceMeters)
+            put("p_points", json.encodeToJsonElement(ListSerializer, route.points))
+            put("p_note", route.note)
+        }
         val token = client.postgrest.rpc(
             function = "create_sanpo_share",
-            parameters = CreateShareParams(
-                routeLocalId = route.id,
-                name = route.name,
-                startedAt = Instant.ofEpochMilli(route.startedAt).toString(),
-                durationMs = route.durationMs,
-                distanceMeters = route.distanceMeters,
-                points = route.points,
-                note = route.note
-            )
+            parameters = parameters
         ).decodeAs<String>()
         BuildConfig.SHARE_API_URL.removeSuffix("/api/share") + "/s/$token"
     }
@@ -101,6 +105,8 @@ object SupabaseRouteSync {
     )
 }
 
+private val ListSerializer = kotlinx.serialization.builtins.ListSerializer(LatLngPoint.serializer())
+
 @Serializable
 private data class RemoteRoute(
     @SerialName("user_id") val userId: String,
@@ -127,14 +133,3 @@ private data class RemoteRoute(
         )
     }.getOrNull()
 }
-
-@Serializable
-private data class CreateShareParams(
-    @SerialName("p_route_local_id") val routeLocalId: Long,
-    @SerialName("p_name") val name: String,
-    @SerialName("p_started_at") val startedAt: String,
-    @SerialName("p_duration_ms") val durationMs: Long,
-    @SerialName("p_distance_meters") val distanceMeters: Double,
-    @SerialName("p_points") val points: List<LatLngPoint>,
-    @SerialName("p_note") val note: String
-)
