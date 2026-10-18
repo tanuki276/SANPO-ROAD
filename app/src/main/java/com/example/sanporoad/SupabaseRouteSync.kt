@@ -4,7 +4,6 @@ import android.content.Intent
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.FlowType
 import io.github.jan.supabase.auth.auth
-import io.github.jan.supabase.auth.handleDeeplinks
 import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
@@ -47,13 +46,20 @@ object SupabaseRouteSync {
     }
     suspend fun signInWithGoogle() {
         client.auth.awaitInitialization()
-        client.auth.signInWith(Google)
+        client.auth.signInWith(Google, redirectUrl = "$AUTH_SCHEME://$AUTH_HOST")
     }
-    fun handleAuthDeepLink(intent: Intent, onSuccess: (userId: String, email: String?) -> Unit) {
-        client.handleDeeplinks(intent) { session ->
-            val user = session.user ?: return@handleDeeplinks
-            onSuccess(user.id, user.email)
+    suspend fun completeGoogleSignIn(intent: Intent): Pair<String, String?> {
+        client.auth.awaitInitialization()
+        val data = intent.data ?: error("Googleログインの戻り先を受け取れませんでした")
+        check(data.scheme == AUTH_SCHEME && data.host == AUTH_HOST) {
+            "Googleログインの戻り先が一致しません"
         }
+        data.getQueryParameter("error_description")?.takeIf { it.isNotBlank() }?.let { error(it) }
+        data.getQueryParameter("error")?.takeIf { it.isNotBlank() }?.let { error(it) }
+        val code = data.getQueryParameter("code") ?: error("Googleログインの認証コードがありません")
+        val session = client.auth.exchangeCodeForSession(code)
+        val user = session.user ?: error("Googleログインのセッションを作成できませんでした")
+        return user.id to user.email
     }
     private fun requireAccount(): String {
         val user = client.auth.currentUserOrNull() ?: error("設定からGoogleでログインしてください")
