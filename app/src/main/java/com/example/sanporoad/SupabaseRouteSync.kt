@@ -51,10 +51,7 @@ object SupabaseRouteSync {
         durationMs = durationMs,
         distanceMeters = distanceMeters,
         points = points,
-        gameContract = gameContract,
-        gameScore = gameScore,
-        gameCleared = gameCleared,
-        facility = facility
+        note = note
     )
 }
 
@@ -67,10 +64,7 @@ private data class RemoteRoute(
     @SerialName("duration_ms") val durationMs: Long,
     @SerialName("distance_meters") val distanceMeters: Double,
     val points: List<LatLngPoint>,
-    @SerialName("game_contract") val gameContract: String? = null,
-    @SerialName("game_score") val gameScore: Int = 0,
-    @SerialName("game_cleared") val gameCleared: Boolean = false,
-    val facility: String? = null
+    val note: String = ""
 ) {
     fun toLocalOrNull(): SavedRoute? = runCatching {
         SavedRoute(
@@ -80,10 +74,7 @@ private data class RemoteRoute(
             durationMs = durationMs,
             distanceMeters = distanceMeters,
             points = points,
-            gameContract = gameContract,
-            gameScore = gameScore,
-            gameCleared = gameCleared,
-            facility = facility
+            note = note
         )
     }.getOrNull()
 }
