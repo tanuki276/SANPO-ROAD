@@ -5,8 +5,8 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -68,15 +68,16 @@ fun SanpoRoadApp() {
     val context = LocalContext.current
     val store = remember { RouteStore(context) }
     val scope = rememberCoroutineScope()
-    var loggedIn by remember { mutableStateOf(false) }
+
     var showLogin by remember { mutableStateOf(false) }
     var showSaved by remember { mutableStateOf(false) }
     var selectedRoute by remember { mutableStateOf<SavedRoute?>(null) }
     var syncVersion by remember { mutableIntStateOf(0) }
     var syncStatus by remember { mutableStateOf("ローカル保存") }
+    var worldChange by remember { mutableStateOf<RoadWorldChange?>(null) }
 
     val routes = remember(syncVersion) { store.getAll() }
-    val gameProgress = remember(syncVersion) { WalkingGame.progress(routes) }
+    val world = remember(syncVersion) { RoadWorld.snapshot(routes) }
 
     LaunchedEffect(Unit) {
         syncStatus = "同期中…"
@@ -100,17 +101,13 @@ fun SanpoRoadApp() {
                         }
                     },
                     actions = {
-                        TextButton(onClick = {
-                            if (loggedIn) loggedIn = false else showLogin = true
-                        }) {
-                            Text(if (loggedIn) "ログアウト" else "ログイン")
-                        }
+                        TextButton(onClick = { showLogin = true }) { Text("街の記録") }
                     }
                 )
             }
         ) { padding ->
             Column(Modifier.padding(padding).fillMaxSize()) {
-                GameProgressCard(gameProgress)
+                RoadWorldCard(world)
 
                 if (showSaved) {
                     SavedRoutesScreen(routes) { route ->
@@ -122,7 +119,10 @@ fun SanpoRoadApp() {
                         restoredRoute = selectedRoute,
                         onClearRestoredRoute = { selectedRoute = null },
                         onSave = { route ->
+                            val before = RoadWorld.snapshot(store.getAll())
                             store.save(route)
+                            val after = RoadWorld.snapshot(store.getAll())
+                            worldChange = RoadWorld.change(before, after)
                             selectedRoute = route
                             syncVersion++
                             scope.launch {
@@ -140,47 +140,57 @@ fun SanpoRoadApp() {
 
     if (showLogin) AlertDialog(
         onDismissRequest = { showLogin = false },
-        title = { Text("アカウント") },
-        text = { Text("散歩記録は端末に保存され、Supabaseへ匿名アカウントで同期されます。") },
-        confirmButton = {
-            TextButton(onClick = { loggedIn = true; showLogin = false }) { Text("OK") }
+        title = { Text(world.identity) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(world.description)
+                HorizontalDivider()
+                Text("道路 ${world.roadCells}区画")
+                Text("継ぎ目 ${world.junctions} ・ 広場 ${world.plazas} ・ 幹線 ${world.arterials}")
+                Text("次の構造: ${world.nextStructure}")
+            }
         },
-        dismissButton = {
-            TextButton(onClick = { showLogin = false }) { Text("閉じる") }
-        }
+        confirmButton = { TextButton(onClick = { showLogin = false }) { Text("閉じる") } }
     )
+
+    worldChange?.let { change ->
+        AlertDialog(
+            onDismissRequest = { worldChange = null },
+            title = { Text(change.title) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(change.detail)
+                    HorizontalDivider()
+                    Text("次に狙える構造")
+                    Text(change.nextStructure, style = MaterialTheme.typography.titleSmall)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { worldChange = null }) { Text("街を見る") }
+            }
+        )
+    }
 }
 
 @Composable
-private fun GameProgressCard(progress: GameProgress) {
-    val completed = progress.missions.count { it.complete }
-    val nextMission = progress.missions.firstOrNull { !it.complete }
-
-    Card(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp)
-    ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+private fun RoadWorldCard(world: RoadWorldSnapshot) {
+    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Text("裏街：${world.identity}", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(world.description, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(8.dp))
             Row(
                 Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("Lv.${progress.level}  ✨ ${progress.totalXp} XP", style = MaterialTheme.typography.titleSmall)
-                Text("🔥 ${progress.streakDays}日  🏅 ${progress.badges.size}", style = MaterialTheme.typography.labelLarge)
+                Text("道 ${world.roadCells}", style = MaterialTheme.typography.labelLarge)
+                Text("継 ${world.junctions}", style = MaterialTheme.typography.labelLarge)
+                Text("輪 ${world.plazas}", style = MaterialTheme.typography.labelLarge)
+                Text("幹 ${world.arterials}", style = MaterialTheme.typography.labelLarge)
             }
-            Spacer(Modifier.height(5.dp))
-            LinearProgressIndicator(
-                progress = progress.levelFraction,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                if (nextMission == null) "デイリー達成！ 3/3 🎉"
-                else "デイリー $completed/3 ・ 次: ${nextMission.title}",
-                style = MaterialTheme.typography.labelMedium
-            )
+            Spacer(Modifier.height(6.dp))
+            Text("次の構造 → ${world.nextStructure}", style = MaterialTheme.typography.labelMedium)
         }
     }
 }
@@ -225,7 +235,9 @@ fun MapRecordScreen(
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { perms ->
-        if (perms[Manifest.permission.ACCESS_FINE_LOCATION] == true || perms[Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
+        if (perms[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            perms[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        ) {
             onClearRestoredRoute()
             LocationTrackingService.start(context)
         }
@@ -249,8 +261,15 @@ fun MapRecordScreen(
     }
 
     LaunchedEffect(Unit) {
-        val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasFine = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
         if (hasFine || hasCoarse) {
             try {
                 fused.lastLocation.addOnSuccessListener { location ->
@@ -293,7 +312,12 @@ fun MapRecordScreen(
 
     DisposableEffect(points, restoredRoute, recording, pending, current, copyrightOverlay) {
         mapView.overlays.clear()
-        if (poly.size >= 2) mapView.overlays.add(Polyline().apply { setPoints(poly); width = 10f })
+        if (poly.size >= 2) {
+            mapView.overlays.add(Polyline().apply {
+                setPoints(poly)
+                width = 10f
+            })
+        }
         current?.let { p ->
             mapView.overlays.add(Marker(mapView).apply {
                 position = p
@@ -325,12 +349,15 @@ fun MapRecordScreen(
                 gpsAccuracy <= 20 -> "🟡 GPS普通 ±${gpsAccuracy.roundToInt()}m"
                 else -> "🔴 GPS不安定 ±${gpsAccuracy.roundToInt()}m"
             }
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(gpsText, style = MaterialTheme.typography.labelMedium)
-                Text("✨ +${WalkingGame.pendingXp(distance, durationMs)} XP予定", style = MaterialTheme.typography.labelMedium)
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(gpsText, style = MaterialTheme.typography.labelMedium)
+                    Text("路紋解析中", style = MaterialTheme.typography.labelMedium)
+                }
+                Text(RoadWorld.walkHint(points), style = MaterialTheme.typography.labelLarge)
             }
         }
 
@@ -343,7 +370,7 @@ fun MapRecordScreen(
             ) {
                 StatBox("距離", String.format(Locale.JAPAN, "%.2f km", shownDistance / 1000.0), Modifier.weight(1f))
                 StatBox("時間", formatDuration(shownDuration), Modifier.weight(1f))
-                StatBox("地点", poly.size.toString(), Modifier.weight(1f))
+                StatBox("路点", poly.size.toString(), Modifier.weight(1f))
             }
         }
 
@@ -356,39 +383,50 @@ fun MapRecordScreen(
                     if (recording) {
                         LocationTrackingService.stop(context)
                     } else if (!pending) {
-                        val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-                        val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                        val fine = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.ACCESS_FINE_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED
+                        val coarse = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED
                         if (fine || coarse) {
                             onClearRestoredRoute()
                             LocationTrackingService.start(context)
                         } else {
-                            permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                            permissionLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                                )
+                            )
                         }
                     }
                 },
                 modifier = Modifier.weight(1f),
                 enabled = !pending
-            ) { Text(if (recording) "停止" else if (pending) "保存待ち" else "冒険開始") }
+            ) { Text(if (recording) "停止" else if (pending) "保存待ち" else "道を刻む") }
 
             OutlinedButton(
                 onClick = onShowSaved,
                 modifier = Modifier.weight(1f),
                 enabled = !recording && !pending
-            ) { Text("冒険ログ") }
+            ) { Text("散歩記録") }
         }
     }
 
     if (showName && pending) AlertDialog(
         onDismissRequest = { },
-        title = { Text("冒険を記録") },
+        title = { Text("この道を裏街へ刻む") },
         text = {
             Column {
-                Text("獲得予定: ${WalkingGame.pendingXp(distance, durationMs)} XP")
+                Text(RoadWorld.walkHint(points))
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = routeName,
                     onValueChange = { routeName = it },
-                    label = { Text("コース名") },
+                    label = { Text("この道の名前") },
                     singleLine = true
                 )
             }
@@ -401,9 +439,18 @@ fun MapRecordScreen(
                 val savedDuration = LocationTrackingService.getDurationMs(context)
                 if (savedPoints.isNotEmpty()) {
                     val safeName = routeName.ifBlank {
-                        "${SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.JAPAN).format(Date(savedStartedAt))}の散歩"
+                        "${SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.JAPAN).format(Date(savedStartedAt))}の道"
                     }
-                    onSave(SavedRoute(System.currentTimeMillis(), safeName, savedStartedAt, savedDuration, savedDistance, savedPoints))
+                    onSave(
+                        SavedRoute(
+                            System.currentTimeMillis(),
+                            safeName,
+                            savedStartedAt,
+                            savedDuration,
+                            savedDistance,
+                            savedPoints
+                        )
+                    )
                 }
                 LocationTrackingService.clearPending(context)
                 points = emptyList()
@@ -412,7 +459,7 @@ fun MapRecordScreen(
                 gpsAccuracy = -1.0
                 routeName = ""
                 showName = false
-            }) { Text("記録してXP獲得") }
+            }) { Text("裏街へ反映") }
         },
         dismissButton = {
             TextButton(onClick = {
@@ -439,27 +486,33 @@ private fun formatDuration(durationMs: Long): String {
 
 @Composable
 fun SavedRoutesScreen(routes: List<SavedRoute>, onSelect: (SavedRoute) -> Unit) {
-    if (routes.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("冒険ログはまだありません")
-    } else LazyColumn(Modifier.fillMaxSize()) {
-        items(routes) { route ->
-            ListItem(
-                headlineContent = { Text(route.name) },
-                supportingContent = {
-                    Text(
-                        String.format(
-                            Locale.JAPAN,
-                            "%.2f km / %s / +%d XP",
-                            route.distanceMeters / 1000.0,
-                            formatDuration(route.durationMs),
-                            WalkingGame.pendingXp(route.distanceMeters, route.durationMs)
+    if (routes.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("まだ裏街に道がありません")
+        }
+    } else {
+        LazyColumn(Modifier.fillMaxSize()) {
+            items(routes) { route ->
+                ListItem(
+                    headlineContent = { Text(route.name) },
+                    supportingContent = {
+                        Text(
+                            String.format(
+                                Locale.JAPAN,
+                                "%.2f km / %s / %d路点",
+                                route.distanceMeters / 1000.0,
+                                formatDuration(route.durationMs),
+                                route.points.size
+                            )
                         )
-                    )
-                },
-                leadingContent = { Text("🗺️") },
-                trailingContent = { TextButton(onClick = { onSelect(route) }) { Text("地図") } }
-            )
-            HorizontalDivider()
+                    },
+                    leadingContent = { Text("〰") },
+                    trailingContent = {
+                        TextButton(onClick = { onSelect(route) }) { Text("見る") }
+                    }
+                )
+                HorizontalDivider()
+            }
         }
     }
 }
