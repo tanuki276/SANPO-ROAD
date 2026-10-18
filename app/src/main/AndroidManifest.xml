@@ -13,6 +13,16 @@
         android:label="サンポロード"
         android:supportsRtl="true"
         android:theme="@style/Theme.SanpoRoad">
+        <activity
+            android:name=".AuthCallbackActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="sanporoad" android:host="auth" />
+            </intent-filter>
+        </activity>
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
