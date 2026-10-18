@@ -8,7 +8,8 @@ data class LatLngPoint(
     val lng: Double,
     val timeMs: Long,
     // Optional so routes recorded by older app versions still deserialize correctly.
-    val accuracyM: Float? = null
+    val accuracyM: Float? = null,
+    val segment: Int = 0
 )
 
 @Serializable
@@ -24,5 +25,10 @@ data class SavedRoute(
     // Local app-private photo path. Not shared outside this device.
     val photoPath: String? = null,
     // Private Supabase Storage object path used to back up the photo across devices.
-    val photoObjectPath: String? = null
+    val photoObjectPath: String? = null,
+    val ownerId: String? = null,
+    val updatedAt: Long = 0L,
+    val deletedAt: Long? = null,
+    val favorite: Boolean = false,
+    val photoRemoved: Boolean = false
 )

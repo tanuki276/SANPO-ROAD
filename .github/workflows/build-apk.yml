@@ -39,7 +39,7 @@ jobs:
           gradle-version: '8.9'
 
       - name: Test and build debug APK
-        run: gradle --no-daemon --stacktrace --console=plain testDebugUnitTest assembleDebug
+        run: gradle --no-daemon --stacktrace --console=plain testDebugUnitTest assembleDebug assembleRelease
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -48,3 +48,10 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: app/build/reports/tests/

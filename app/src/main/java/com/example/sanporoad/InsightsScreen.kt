@@ -22,6 +22,7 @@ import java.util.Locale
 fun WalkInsightsScreen(
     routes: List<SavedRoute>,
     weeklyGoalMeters: Double,
+    onRecordChanged: () -> Unit = {},
     onWeeklyGoalChange: (Double) -> Unit
 ) {
     val stats = remember(routes) { WalkStats.calculate(routes) }
@@ -57,7 +58,7 @@ fun WalkInsightsScreen(
             )
         }
         routes.firstOrNull()?.let { latest ->
-            item { ShareLatestWalkCard(latest) }
+            item { ShareLatestWalkCard(latest, onRecordChanged) }
         }
         item { WeeklyChart(weeks) }
         item {
@@ -107,11 +108,11 @@ fun WalkInsightsScreen(
 }
 
 @Composable
-private fun ShareLatestWalkCard(route: SavedRoute) {
+private fun ShareLatestWalkCard(route: SavedRoute, onRecordChanged: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var confirm by remember(route.id) { mutableStateOf(false) }
-    var shareMap by remember(route.id) { mutableStateOf(false) }
+    var shareMap by remember(route.id) { mutableStateOf(WalkPreferences(context).shareLocation) }
     var sharing by remember(route.id) { mutableStateOf(false) }
     var error by remember(route.id) { mutableStateOf<String?>(null) }
 
@@ -140,7 +141,7 @@ private fun ShareLatestWalkCard(route: SavedRoute) {
                 }
                 AssistChip(
                     onClick = {},
-                    label = { Text("地図OFFが標準") },
+                    label = { Text(if (shareMap) "地図あり" else "地図なし") },
                     enabled = false
                 )
             }
@@ -149,7 +150,10 @@ private fun ShareLatestWalkCard(route: SavedRoute) {
                 style = MaterialTheme.typography.bodySmall
             )
             Button(
-                onClick = { confirm = true },
+                onClick = {
+                    if (WalkPreferences(context).activeAccountId == null) error = "設定からログインすると、共有リンクの作成・停止ができます。"
+                    else confirm = true
+                },
                 enabled = !sharing,
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -220,7 +224,16 @@ private fun ShareLatestWalkCard(route: SavedRoute) {
                     confirm = false
                     sharing = true
                     scope.launch {
-                        SupabaseRouteSync.createShareLink(route, shareMap)
+                        val owned = try {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { RouteStore(context).claimForShare(route) }
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                        catch (_: Exception) {
+                            error = "共有の準備ができませんでした。ログインと空き容量を確認してください。"
+                            sharing = false
+                            return@launch
+                        }
+                        onRecordChanged()
+                        SupabaseRouteSync.createShareLink(owned, shareMap)
                             .onSuccess { url ->
                                 val text = buildString {
                                     appendLine(route.name)

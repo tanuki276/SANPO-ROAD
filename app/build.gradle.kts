@@ -12,12 +12,28 @@ android {
         applicationId = "com.example.sanporoad"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = providers.gradleProperty("SANPO_VERSION_CODE").get().toInt()
+        versionName = providers.gradleProperty("SANPO_VERSION_NAME").get()
 
         buildConfigField("String", "SUPABASE_URL", "\"https://clidwzzqdofoizaxwbzo.supabase.co\"")
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_VLvDV8FqnNwzp3gYV-uEhQ_DgSJv_WZ\"")
         buildConfigField("String", "SHARE_API_URL", "\"https://sanpo-road-share.vercel.app/api/share\"")
+    }
+    signingConfigs {
+        if (!System.getenv("SANPO_KEYSTORE_PATH").isNullOrBlank()) {
+            create("release") {
+                storeFile = file(System.getenv("SANPO_KEYSTORE_PATH"))
+                storePassword = System.getenv("SANPO_STORE_PASSWORD")
+                keyAlias = System.getenv("SANPO_KEY_ALIAS")
+                keyPassword = System.getenv("SANPO_KEY_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.findByName("release")
+            isMinifyEnabled = false
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21

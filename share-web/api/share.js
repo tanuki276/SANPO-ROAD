@@ -41,7 +41,7 @@ export async function GET(request) {
       showMap: data.show_map !== false,
     }, {
       headers: {
-        'cache-control': 'public, max-age=60, s-maxage=300',
+        'cache-control': 'no-store, max-age=0',
         'x-robots-tag': 'noindex, nofollow, noarchive',
       },
     })

@@ -126,7 +126,9 @@
           document.getElementById('privacyText').textContent='このリンクには散歩ルートが含まれています。';
           const map=L.map('map',{scrollWheelZoom:false});
           L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
-          const line=L.polyline(points,{weight:6,opacity:.9,color:'#2b7547'}).addTo(map);
+          const segments=[]; let lastSegment=null;
+          (data.points||[]).forEach(p=>{ const segment=p.segment||0; if(segment!==lastSegment){segments.push([]); lastSegment=segment;} segments[segments.length-1].push([p.lat,p.lng]); });
+          const line=L.polyline(segments,{weight:6,opacity:.9,color:'#2b7547'}).addTo(map);
           L.circleMarker(points[0],{radius:7,color:'#1f5d38',fillOpacity:1}).addTo(map).bindTooltip('スタート');
           L.circleMarker(points[points.length-1],{radius:7,color:'#8f3d37',fillOpacity:1}).addTo(map).bindTooltip('ゴール');
           map.fitBounds(line.getBounds(),{padding:[28,28],maxZoom:17});

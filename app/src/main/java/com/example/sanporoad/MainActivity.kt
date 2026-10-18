@@ -8,6 +8,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -15,6 +16,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,7 +76,7 @@ private val SANPO_OSM_TILE_SOURCE = XYTileSource(
     )
 )
 
-private enum class AppScreen { MAP, HISTORY, INSIGHTS }
+private enum class AppScreen { MAP, HISTORY, INSIGHTS, SETTINGS }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -100,6 +102,12 @@ fun SanpoRoadApp() {
     val context = LocalContext.current
     val store = remember { RouteStore(context) }
     val preferences = remember { WalkPreferences(context) }
+    val scope = rememberCoroutineScope()
+    var privacyVersion by remember { mutableIntStateOf(0) }
+    val cloudEnabled = remember(privacyVersion) { preferences.cloudSync }
+    val photoEnabled = remember(privacyVersion) { preferences.photoSync }
+    val accountId = remember(privacyVersion) { preferences.activeAccountId }
+    var editingRoute by remember { mutableStateOf<SavedRoute?>(null) }
 
     var screen by rememberSaveable { mutableStateOf(AppScreen.MAP) }
     var selectedRoute by remember { mutableStateOf<SavedRoute?>(null) }
@@ -114,16 +122,21 @@ fun SanpoRoadApp() {
 
     BackHandler(enabled = screen != AppScreen.MAP) { screen = AppScreen.MAP }
 
-    LaunchedEffect(syncRequest) {
+    LaunchedEffect(syncRequest, cloudEnabled, photoEnabled, accountId) {
+        if (!cloudEnabled || accountId == null) {
+            syncing = false
+            syncStatus = "端末のみ保存"
+            return@LaunchedEffect
+        }
         syncing = true
         syncStatus = "記録を同期中…"
         try {
             val result = withContext(Dispatchers.IO) { store.syncAll() }
             syncVersion++
-            syncStatus = if (result.cloudAvailable && result.failedUploads == 0) {
+            syncStatus = if (result.failedUploads == 0) {
                 "記録は同期済み"
             } else {
-                "端末に保存済み・同期待ち"
+                "同期失敗・端末に保存済み"
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -145,7 +158,7 @@ fun SanpoRoadApp() {
                         }
                     },
                     actions = {
-                        IconButton(onClick = { syncRequest++ }, enabled = !syncing) {
+                        IconButton(onClick = { if (cloudEnabled) syncRequest++ else screen = AppScreen.SETTINGS }, enabled = !syncing) {
                             if (syncing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                             else Icon(Icons.Default.Refresh, contentDescription = "記録を再同期")
                         }
@@ -157,7 +170,8 @@ fun SanpoRoadApp() {
                     listOf(
                         Triple(AppScreen.MAP, "散歩", Icons.Default.Home),
                         Triple(AppScreen.HISTORY, "記録", Icons.Default.List),
-                        Triple(AppScreen.INSIGHTS, "振り返り", Icons.Default.DateRange)
+                        Triple(AppScreen.INSIGHTS, "振り返り", Icons.Default.DateRange),
+                        Triple(AppScreen.SETTINGS, "設定", Icons.Default.Settings)
                     ).forEach { (destination, label, icon) ->
                         NavigationBarItem(
                             selected = screen == destination,
@@ -174,15 +188,21 @@ fun SanpoRoadApp() {
 
                 when (screen) {
                     AppScreen.HISTORY -> {
-                        WalkHistoryScreen(routes, onStartWalk = { screen = AppScreen.MAP }) { route ->
+                        WalkHistoryScreen(routes, onStartWalk = { screen = AppScreen.MAP }, onEdit = { editingRoute = it }) { route ->
                             selectedRoute = route
                             screen = AppScreen.MAP
                         }
                     }
+                    AppScreen.SETTINGS -> PrivacySettingsScreen(
+                        store, preferences, syncStatus,
+                        onChanged = { privacyVersion++; syncVersion++; selectedRoute = null },
+                        onSync = { syncRequest++ }
+                    )
                     AppScreen.INSIGHTS -> {
                         WalkInsightsScreen(
                             routes = routes,
                             weeklyGoalMeters = weeklyGoalMeters,
+                            onRecordChanged = { syncVersion++ },
                             onWeeklyGoalChange = { meters ->
                                 preferences.weeklyGoalMeters = meters
                                 weeklyGoalMeters = meters
@@ -208,6 +228,21 @@ fun SanpoRoadApp() {
         }
     }
 
+    editingRoute?.let { route ->
+        RouteEditorDialog(route, onClose = { editingRoute = null }, onSave = { updated ->
+            withContext(Dispatchers.IO) { store.save(updated) }
+            syncVersion++; syncRequest++; editingRoute = null
+        }, onDelete = {
+            withContext(Dispatchers.IO) { store.delete(route) }
+            syncVersion++; selectedRoute = null
+            if (preferences.activeAccountId != null) {
+                try { withContext(Dispatchers.IO) { store.flushDeletes() } }
+                catch (e: CancellationException) { throw e }
+                catch (_: Exception) { syncStatus = "端末は削除済み・クラウド削除は同期待ち" }
+            }
+            editingRoute = null
+        })
+    }
     lastSavedRoute?.let { saved ->
         WalkResultDialog(
             route = saved,
@@ -245,6 +280,7 @@ fun MapRecordScreen(
     }
 
     var recording by remember { mutableStateOf(LocationTrackingService.isRecording(context)) }
+    var paused by remember { mutableStateOf(LocationTrackingService.isPaused(context)) }
     var points by remember { mutableStateOf(LocationTrackingService.getPoints(context)) }
     var startedAt by remember { mutableLongStateOf(LocationTrackingService.getStartedAt(context)) }
     var distance by remember { mutableDoubleStateOf(LocationTrackingService.getDistanceMeters(context)) }
@@ -342,6 +378,7 @@ fun MapRecordScreen(
             val stateRecording = LocationTrackingService.isRecording(context)
             val statePoints = LocationTrackingService.getPoints(context)
             recording = stateRecording
+            paused = LocationTrackingService.isPaused(context)
             points = statePoints
             startedAt = LocationTrackingService.getStartedAt(context)
             distance = LocationTrackingService.getDistanceMeters(context)
@@ -350,7 +387,7 @@ fun MapRecordScreen(
             statePoints.lastOrNull()?.let {
                 val p = GeoPoint(it.lat, it.lng)
                 current = p
-                if (stateRecording && followLocation) mapView.controller.animateTo(p)
+                if (stateRecording && !paused && followLocation) mapView.controller.animateTo(p)
             }
             if (!stateRecording && LocationTrackingService.hasPendingRecording(context)) showSaveDialog = true
             kotlinx.coroutines.delay(500L)
@@ -364,9 +401,10 @@ fun MapRecordScreen(
 
     DisposableEffect(points, restoredRoute, recording, pending, current, copyrightOverlay) {
         mapView.overlays.clear()
-        if (poly.size >= 2) {
-            mapView.overlays.add(Polyline().apply {
-                setPoints(poly)
+        val shownPoints = if (showingRecordedSession) points else restoredRoute?.points.orEmpty()
+        shownPoints.groupBy { it.segment }.values.forEach { segment ->
+            if (segment.size >= 2) mapView.overlays.add(Polyline().apply {
+                setPoints(segment.map { GeoPoint(it.lat, it.lng) })
                 width = 10f
             })
         }
@@ -430,6 +468,7 @@ fun MapRecordScreen(
 
         if (recording || pending) {
             val gpsText = when {
+                paused -> "一時停止中・時間と距離の計測を止めています"
                 gpsAccuracy <= 0 -> "GPS探索中"
                 gpsAccuracy <= 10 -> "GPS良好 ±${gpsAccuracy.roundToInt()}m"
                 gpsAccuracy <= 20 -> "GPS普通 ±${gpsAccuracy.roundToInt()}m"
@@ -478,10 +517,10 @@ fun MapRecordScreen(
             ) { Text(if (recording) "散歩を終了" else if (pending) "保存待ち" else "散歩を開始") }
 
             OutlinedButton(
-                onClick = onShowSaved,
+                onClick = { if (recording) LocationTrackingService.togglePause(context) else onShowSaved() },
                 modifier = Modifier.weight(1f),
-                enabled = !recording && !pending
-            ) { Text("記録を見る") }
+                enabled = !pending
+            ) { Text(if (recording) { if (paused) "再開" else "一時停止" } else "記録を見る") }
         }
     }
 
@@ -532,7 +571,7 @@ fun MapRecordScreen(
                         check(savedPoints.isNotEmpty())
                         val savedStartedAt = LocationTrackingService.getStartedAt(context).takeIf { it > 0 } ?: startedAt
                         // A stable ID makes retrying a failed save idempotent.
-                        val routeId = savedStartedAt
+                        val routeId = LocationTrackingService.getSessionId(context).takeIf { it > 0 } ?: savedStartedAt
                         val photoPath = withContext(Dispatchers.IO) {
                             photoUri?.let { PhotoStore.copyIntoAppStorage(context, it, routeId)
                                 ?: error("photo_copy_failed") }
@@ -648,10 +687,20 @@ private fun WalkResultDialog(
 }
 
 @Composable
-fun WalkHistoryScreen(routes: List<SavedRoute>, onStartWalk: () -> Unit, onSelect: (SavedRoute) -> Unit) {
+fun WalkHistoryScreen(routes: List<SavedRoute>, onStartWalk: () -> Unit, onEdit: (SavedRoute) -> Unit, onSelect: (SavedRoute) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     var sort by rememberSaveable { mutableStateOf(HistorySort.NEWEST) }
-    val visibleRoutes = remember(routes, query, sort) { filterWalkHistory(routes, query, sort) }
+    var recentOnly by rememberSaveable { mutableStateOf(false) }
+    var longOnly by rememberSaveable { mutableStateOf(false) }
+    var photosOnly by rememberSaveable { mutableStateOf(false) }
+    var favoritesOnly by rememberSaveable { mutableStateOf(false) }
+    val visibleRoutes = remember(routes, query, sort, recentOnly, longOnly, photosOnly, favoritesOnly) {
+        filterWalkHistory(routes, query, sort, HistoryFilter(
+            since = if (recentOnly) System.currentTimeMillis() - 30L * 86400000 else 0L,
+            minimumMeters = if (longOnly) 3000.0 else 0.0,
+            photosOnly = photosOnly, favoritesOnly = favoritesOnly
+        ))
+    }
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -684,12 +733,18 @@ fun WalkHistoryScreen(routes: List<SavedRoute>, onStartWalk: () -> Unit, onSelec
                         FilterChip(selected = sort == option, onClick = { sort = option }, label = { Text(option.label) })
                     }
                 }
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(recentOnly, { recentOnly = !recentOnly }, label = { Text("30日以内") })
+                    FilterChip(longOnly, { longOnly = !longOnly }, label = { Text("3km以上") })
+                    FilterChip(photosOnly, { photosOnly = !photosOnly }, label = { Text("写真あり") })
+                    FilterChip(favoritesOnly, { favoritesOnly = !favoritesOnly }, label = { Text("★お気に入り") })
+                }
                 Text("${visibleRoutes.size}件", style = MaterialTheme.typography.labelMedium)
             }
             if (visibleRoutes.isEmpty()) item {
                 Text("一致する記録がありません。別の名前やメモで検索してみてください。", Modifier.padding(vertical = 24.dp))
             }
-            items(visibleRoutes, key = { it.id }) { route ->
+            items(visibleRoutes, key = { "${it.ownerId}:${it.id}" }) { route ->
                 val comparison = remember(route, routes) { WalkInsights.compareWithPreviousSimilar(route, routes) }
                 Card(onClick = { onSelect(route) }, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -699,7 +754,10 @@ fun WalkHistoryScreen(routes: List<SavedRoute>, onStartWalk: () -> Unit, onSelec
                         Text("${formatKm(route.distanceMeters)} ・ ${formatDuration(route.durationMs)} ・ ${paceText(route.distanceMeters, route.durationMs)}")
                         comparison?.let { Text("前回比 ${comparisonCompactText(it)}", style = MaterialTheme.typography.bodySmall) }
                         if (route.note.isNotBlank()) Text(route.note, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text("地図で見る →", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            TextButton(onClick = { onSelect(route) }) { Text("地図で見る") }
+                            TextButton(onClick = { onEdit(route) }) { Text(if (route.favorite) "★ 編集・削除" else "編集・削除") }
+                        }
                     }
                 }
             }
@@ -709,16 +767,18 @@ fun WalkHistoryScreen(routes: List<SavedRoute>, onStartWalk: () -> Unit, onSelec
 
 @Composable
 private fun RoutePhoto(route: SavedRoute, modifier: Modifier = Modifier) {
+    val settings = WalkPreferences(LocalContext.current)
+    val allowRemote = settings.cloudSync && settings.photoSync && settings.activeAccountId == route.ownerId
     val local = remember(route.photoPath) { PhotoStore.localFile(route.photoPath) }
     var remoteUrl by remember(route.photoObjectPath) { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(route.photoObjectPath, local) {
-        if (local == null && route.photoObjectPath != null) {
+    LaunchedEffect(route.photoObjectPath, local, allowRemote) {
+        if (allowRemote && local == null && route.photoObjectPath != null) {
             remoteUrl = SupabaseRouteSync.signedPhotoUrl(route.photoObjectPath)
         }
     }
 
-    val model: Any? = local ?: remoteUrl
+    val model: Any? = local ?: remoteUrl?.takeIf { allowRemote }
     if (model != null) {
         AsyncImage(
             model = model,
