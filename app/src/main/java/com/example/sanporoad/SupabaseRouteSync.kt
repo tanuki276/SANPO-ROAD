@@ -53,15 +53,17 @@ object SupabaseRouteSync {
         client.storage[PHOTO_BUCKET].createSignedUrl(objectPath, 1.hours)
     }.getOrNull()
 
-    suspend fun createShareLink(route: SavedRoute): Result<String> = runCatching {
+    suspend fun createShareLink(route: SavedRoute, shareMap: Boolean = false): Result<String> = runCatching {
+        val sharedPoints = if (shareMap) route.points else emptyList()
         val parameters = buildJsonObject {
             put("p_route_local_id", route.id)
             put("p_name", route.name)
             put("p_started_at", Instant.ofEpochMilli(route.startedAt).toString())
             put("p_duration_ms", route.durationMs)
             put("p_distance_meters", route.distanceMeters)
-            put("p_points", json.encodeToJsonElement(ListSerializer, route.points))
+            put("p_points", json.encodeToJsonElement(ListSerializer, sharedPoints))
             put("p_note", route.note)
+            put("p_share_map", shareMap)
         }
         val token = client.postgrest.rpc(
             function = "create_sanpo_share",

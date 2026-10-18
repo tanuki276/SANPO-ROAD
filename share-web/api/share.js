@@ -36,8 +36,9 @@ export async function GET(request) {
       startedAt: data.started_at,
       durationMs: data.duration_ms,
       distanceMeters: data.distance_meters,
-      points: data.points || [],
+      points: data.show_map ? (data.points || []) : [],
       note: data.note || '',
+      showMap: data.show_map !== false,
     }, {
       headers: {
         'cache-control': 'public, max-age=60, s-maxage=300',
