@@ -12,13 +12,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 class AuthCallbackActivity : ComponentActivity() {
     private var errorMessage by mutableStateOf<String?>(null)
@@ -55,7 +56,7 @@ class AuthCallbackActivity : ComponentActivity() {
             }
         }
 
-        LaunchedEffectBridge.run(this) {
+        lifecycleScope.launch {
             try {
                 val (userId, email) = SupabaseRouteSync.completeGoogleSignIn(intent)
                 preferences.cloudSync = false
@@ -69,11 +70,5 @@ class AuthCallbackActivity : ComponentActivity() {
                 errorMessage = e.message ?: "認証処理でエラーが発生しました"
             }
         }
-    }
-}
-
-private object LaunchedEffectBridge {
-    fun run(activity: ComponentActivity, block: suspend () -> Unit) {
-        activity.lifecycleScope.launchWhenStarted { block() }
     }
 }
