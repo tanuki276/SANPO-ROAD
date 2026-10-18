@@ -6,12 +6,12 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.from
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.storage.Storage
 import io.github.jan.supabase.storage.storage
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.time.Instant
-import java.util.UUID
 import kotlin.time.Duration.Companion.hours
 
 object SupabaseRouteSync {
@@ -50,12 +50,9 @@ object SupabaseRouteSync {
     }.getOrNull()
 
     suspend fun createShareLink(route: SavedRoute): Result<String> = runCatching {
-        val userId = ensureUserId()
-        val token = UUID.randomUUID().toString().replace("-", "")
-        client.from("sanpo_shares").upsert(
-            RemoteShare(
-                token = token,
-                ownerId = userId,
+        val token = client.postgrest.rpc(
+            function = "create_sanpo_share",
+            parameters = CreateShareParams(
                 routeLocalId = route.id,
                 name = route.name,
                 startedAt = Instant.ofEpochMilli(route.startedAt).toString(),
@@ -64,9 +61,7 @@ object SupabaseRouteSync {
                 points = route.points,
                 note = route.note
             )
-        ) {
-            onConflict = "owner_id,route_local_id"
-        }
+        ).decodeAs<String>()
         BuildConfig.SHARE_API_URL.removeSuffix("/api/share") + "/s/$token"
     }
 
@@ -133,14 +128,12 @@ private data class RemoteRoute(
 }
 
 @Serializable
-private data class RemoteShare(
-    val token: String,
-    @SerialName("owner_id") val ownerId: String,
-    @SerialName("route_local_id") val routeLocalId: Long,
-    val name: String,
-    @SerialName("started_at") val startedAt: String,
-    @SerialName("duration_ms") val durationMs: Long,
-    @SerialName("distance_meters") val distanceMeters: Double,
-    val points: List<LatLngPoint>,
-    val note: String
+private data class CreateShareParams(
+    @SerialName("p_route_local_id") val routeLocalId: Long,
+    @SerialName("p_name") val name: String,
+    @SerialName("p_started_at") val startedAt: String,
+    @SerialName("p_duration_ms") val durationMs: Long,
+    @SerialName("p_distance_meters") val distanceMeters: Double,
+    @SerialName("p_points") val points: List<LatLngPoint>,
+    @SerialName("p_note") val note: String
 )
