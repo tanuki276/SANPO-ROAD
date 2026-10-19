@@ -7,9 +7,9 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.location.Location
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -17,8 +17,7 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import kotlinx.serialization.builtins.ListSerializer
-import org.osmdroid.util.GeoPoint
-import kotlin.math.*
+import kotlin.math.roundToInt
 
 class LocationTrackingService : Service() {
     private val fused by lazy { LocationServices.getFusedLocationProviderClient(this) }
@@ -26,16 +25,30 @@ class LocationTrackingService : Service() {
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             if (!isRecording(this@LocationTrackingService)) return
-            val loc = result.lastLocation ?: return
-            val now = System.currentTimeMillis()
-            val accuracy = if (loc.hasAccuracy()) loc.accuracy else Float.MAX_VALUE
-            put(this@LocationTrackingService, KEY_LAST_ACCURACY, accuracy.toDouble())
-
-            if (now - loc.time > MAX_LOCATION_AGE_MS) return
-            if (!loc.hasAccuracy() || accuracy > MAX_ACCEPTED_ACCURACY_M) return
-            if (loc.hasSpeed() && loc.speed > MAX_REPORTED_SPEED_MPS) return
-
-            addFilteredLocation(loc, now)
+            val points = getPoints(this@LocationTrackingService).toMutableList()
+            var distance = getDistanceMeters(this@LocationTrackingService)
+            var changed = false
+            val elapsedNow = SystemClock.elapsedRealtimeNanos()
+            for (loc in result.locations.sortedBy { it.elapsedRealtimeNanos }) {
+                // Use the monotonic clock: changing the device clock must not make a stale fix fresh.
+                val ageNanos = elapsedNow - loc.elapsedRealtimeNanos
+                if (ageNanos < 0 || ageNanos > MAX_LOCATION_AGE_MS * 1_000_000L) continue
+                if (loc.time < getStartedAt(this@LocationTrackingService)) continue
+                val accuracy = if (loc.hasAccuracy()) loc.accuracy else Float.NaN
+                if (accuracy.isFinite() && accuracy > 0f) {
+                    put(this@LocationTrackingService, KEY_LAST_ACCURACY, accuracy.toDouble())
+                }
+                val candidate = LatLngPoint(loc.latitude, loc.longitude, loc.time, accuracy)
+                val segment = GpsTrackFilter.segmentMeters(
+                    points.lastOrNull(), candidate,
+                    if (loc.hasSpeed()) loc.speed else null
+                ) ?: continue
+                points += candidate
+                distance += segment
+                changed = true
+            }
+            // Persist a batch together instead of serializing the entire route for every fix.
+            if (changed) persistPoints(points, distance)
             updateNotification()
         }
     }
@@ -72,9 +85,10 @@ class LocationTrackingService : Service() {
             put(this, KEY_LAST_ACCURACY, -1.0)
         }
 
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L)
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
             .setMinUpdateIntervalMillis(1000L)
-            .setMaxUpdateDelayMillis(4000L)
+            .setMaxUpdateDelayMillis(0L)
+            .setMaxUpdateAgeMillis(0L)
             .setWaitForAccurateLocation(true)
             .build()
         try {
@@ -110,49 +124,11 @@ class LocationTrackingService : Service() {
         super.onDestroy()
     }
 
-    private fun addFilteredLocation(loc: Location, now: Long) {
-        val points = getPoints(this).toMutableList()
-        val candidate = LatLngPoint(loc.latitude, loc.longitude, now, loc.accuracy)
-        val previous = points.lastOrNull()
-
-        if (previous == null) {
-            // The very first fix is accepted only when reasonably accurate. This prevents the
-            // common startup "jump" from a coarse cached position to the real position.
-            if (loc.accuracy <= FIRST_FIX_MAX_ACCURACY_M) {
-                points += candidate
-                persistPoints(points, 0.0)
-            }
-            return
-        }
-
-        val dtSeconds = ((candidate.timeMs - previous.timeMs).coerceAtLeast(1L)) / 1000.0
-        val segment = haversine(
-            GeoPoint(previous.lat, previous.lng),
-            GeoPoint(candidate.lat, candidate.lng)
-        )
-        val previousAccuracy = previous.accuracyM?.toDouble() ?: loc.accuracy.toDouble()
-        val accuracyNoise = max(previousAccuracy, loc.accuracy.toDouble())
-
-        // GPS naturally wanders while standing still. Movement smaller than the expected noise
-        // radius is ignored completely instead of inflating the walk distance.
-        val minimumMovement = max(MIN_MOVEMENT_METERS, accuracyNoise * NOISE_RADIUS_FACTOR)
-        if (segment < minimumMovement) return
-
-        val calculatedSpeed = segment / dtSeconds
-        if (calculatedSpeed > MAX_CALCULATED_SPEED_MPS) return
-
-        // Reject sudden jumps that are much larger than both fixes' accuracy envelopes.
-        val plausibleJump = max(MAX_NORMAL_SEGMENT_METERS, (previousAccuracy + loc.accuracy) * JUMP_ACCURACY_FACTOR)
-        if (segment > plausibleJump) return
-
-        val newDistance = getDistanceMeters(this) + segment
-        points += candidate
-        persistPoints(points, newDistance)
-    }
-
     private fun persistPoints(points: List<LatLngPoint>, distance: Double) {
-        put(this, KEY_POINTS, JsonConfig.encodeToString(ListSerializer(LatLngPoint.serializer()), points))
-        put(this, KEY_DISTANCE, distance)
+        prefs(this).edit()
+            .putString(KEY_POINTS, JsonConfig.encodeToString(ListSerializer(LatLngPoint.serializer()), points))
+            .putString(KEY_DISTANCE, distance.toString())
+            .apply()
     }
 
     private fun buildNotification(): Notification {
@@ -208,15 +184,7 @@ class LocationTrackingService : Service() {
         private const val KEY_DISTANCE = "distance"
         private const val KEY_LAST_ACCURACY = "lastAccuracy"
 
-        private const val MAX_LOCATION_AGE_MS = 8_000L
-        private const val MAX_ACCEPTED_ACCURACY_M = 25f
-        private const val FIRST_FIX_MAX_ACCURACY_M = 18f
-        private const val MIN_MOVEMENT_METERS = 4.0
-        private const val NOISE_RADIUS_FACTOR = 0.65
-        private const val MAX_CALCULATED_SPEED_MPS = 5.5 // 19.8 km/h: fast running, above normal walking
-        private const val MAX_REPORTED_SPEED_MPS = 6.0f
-        private const val MAX_NORMAL_SEGMENT_METERS = 45.0
-        private const val JUMP_ACCURACY_FACTOR = 1.8
+        private const val MAX_LOCATION_AGE_MS = 15_000L
 
         const val ACTION_START = "com.example.sanporoad.START"
         const val ACTION_STOP = "com.example.sanporoad.STOP"
@@ -285,13 +253,6 @@ class LocationTrackingService : Service() {
             edit.apply()
         }
 
-        private fun haversine(a: GeoPoint, b: GeoPoint): Double {
-            val r = 6371000.0
-            val dLat = Math.toRadians(b.latitude - a.latitude)
-            val dLon = Math.toRadians(b.longitude - a.longitude)
-            val x = sin(dLat / 2).pow(2) + cos(Math.toRadians(a.latitude)) * cos(Math.toRadians(b.latitude)) * sin(dLon / 2).pow(2)
-            return r * 2 * atan2(sqrt(x), sqrt(1 - x))
-        }
     }
 
     private object JsonConfig {
@@ -300,4 +261,5 @@ class LocationTrackingService : Service() {
         inline fun <reified T> decodeFromString(value: String): T = json.decodeFromString(value)
     }
 }
+
 
