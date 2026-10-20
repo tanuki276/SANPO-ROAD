@@ -67,9 +67,10 @@ class AuthCallbackActivity : ComponentActivity() {
                 })
                 finish()
             } catch (e: Exception) {
-                errorMessage = e.message ?: "認証処理でエラーが発生しました"
+                errorMessage = "ログインできませんでした。設定からもう一度ログインしてください。"
             }
         }
     }
 }
+
 

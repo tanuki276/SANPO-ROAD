@@ -17,7 +17,8 @@ class WalkViewModel(application: Application): AndroidViewModel(application) {
         loading=viewModelScope.launch {
             try { mutableRoutes.value=withContext(Dispatchers.IO){store.getAll()};mutableError.value=null }
             catch(e:CancellationException){throw e}
-            catch(e:Exception){mutableError.value=e.message ?: "記録を読み込めませんでした"}
+            catch(e:Exception){mutableError.value="記録を読み込めませんでした。再試行してください。"}
         }
     }
 }
+

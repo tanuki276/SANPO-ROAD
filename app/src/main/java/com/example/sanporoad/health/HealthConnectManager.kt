@@ -19,7 +19,9 @@ internal class HealthConnectManager(private val context: Context) {
         val reads = setOf(HealthPermission.getReadPermission(StepsRecord::class), HealthPermission.getReadPermission(HeartRateRecord::class), HealthPermission.getReadPermission(TotalCaloriesBurnedRecord::class))
         val permissions = writes + reads
     }
-    fun available() = HealthConnectClient.getSdkStatus(context) == HealthConnectClient.SDK_AVAILABLE
+    fun status() = HealthConnectClient.getSdkStatus(context)
+    fun available() = status() == HealthConnectClient.SDK_AVAILABLE
+    suspend fun grantedPermissions(): Set<String> = if (available()) client().permissionController.getGrantedPermissions() else emptySet()
     private fun client(): HealthConnectClient { check(available()) { "Health Connectをインストール・更新してください" }; return HealthConnectClient.getOrCreate(context) }
     suspend fun write(route: SavedRoute): String {
         if (route.imported) return "インポート記録はHealth Connectへ送信しません"
@@ -58,3 +60,4 @@ internal class HealthConnectManager(private val context: Context) {
         return HealthSummary(result[StepsRecord.COUNT_TOTAL],result[HeartRateRecord.BPM_AVG],result[TotalCaloriesBurnedRecord.ENERGY_TOTAL]?.inKilocalories)
     }
 }
+

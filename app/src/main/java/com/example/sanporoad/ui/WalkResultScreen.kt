@@ -86,13 +86,17 @@ internal fun WalkResultDialog(
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 RoutePhoto(route, Modifier.fillMaxWidth().height(150.dp))
                 Text(route.name, style = MaterialTheme.typography.titleMedium)
-                Text("${formatKm(route.distanceMeters)} ・ ${formatDuration(route.durationMs)}")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    StatBox("距離", formatKm(route.distanceMeters), Modifier.weight(1f))
+                    StatBox("移動", formatDuration(route.durationMs), Modifier.weight(1f))
+                    StatBox("ペース", paceText(route.distanceMeters, route.durationMs), Modifier.weight(1f))
+                }
+                HealthRoutePanel(route)
                 Text(timeSummary(route.durationMs, route.restDurationMs))
                 Text(route.tags.joinToString(" / "))
                 if (route.imported) Text("インポート記録・自己記録の対象外")
                 GpsQualityView(route.gpsQuality)
-                HealthRoutePanel(route)
-                Text("平均ペース ${paceText(route.distanceMeters, route.durationMs)}")
+                HealthWriteRetry(route)
                 comparison?.let {
                     HorizontalDivider()
                     Text("前回の似たコースと比較", style = MaterialTheme.typography.labelLarge)
@@ -201,6 +205,7 @@ fun StatBox(label: String, value: String, modifier: Modifier = Modifier) {
         }
     }
 }
+
 
 
 
