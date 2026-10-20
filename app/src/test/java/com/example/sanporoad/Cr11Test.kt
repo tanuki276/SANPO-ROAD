@@ -72,4 +72,8 @@ class Cr11Test {
         val restored=Json.decodeFromString<GpsDistanceAccumulator>(Json.encodeToString(GpsDistanceAccumulator.serializer(),accumulator))
         assertEquals(accumulator.report(),restored.report())
     }
+    @Test fun legacyEmptyLiveMetadataIsNotAnAccumulatorCheckpoint() {
+        try { Json.decodeFromString<GpsDistanceAccumulator>("{}"); fail("Legacy live metadata must trigger point replay") }
+        catch(_: kotlinx.serialization.SerializationException) {}
+    }
 }

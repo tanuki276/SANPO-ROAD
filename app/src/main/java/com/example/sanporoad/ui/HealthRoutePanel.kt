@@ -16,7 +16,7 @@ import kotlinx.coroutines.CancellationException
     var busy by remember { mutableStateOf(false) }
     fun refresh(write: Boolean) { scope.launch {
         busy=true
-        try { if(write) message=manager.write(route); summary=manager.read(route) }
+        try { if(write) message=manager.writeAfterSave(route); summary=manager.read(route) }
         catch(e: CancellationException) { throw e }
         catch(_: Exception) { message="Health Connectを利用できません。SANPOの記録は保存されています。権限や対応状況を確認し、再試行できます。" }
         finally { busy=false }

@@ -25,7 +25,8 @@ data class GpsQualityReport(
  * A short, accuracy-sized deadband coalesces jitter. Consistent small steps can pass earlier;
  * reversal inside the uncertainty radius is deliberately not treated as proven movement. */
 @Serializable
-internal class GpsDistanceAccumulator {
+internal class GpsDistanceAccumulator(private val stateVersion: Int) {
+    constructor() : this(1)
     private var anchor: LatLngPoint? = null
     private var previous: LatLngPoint? = null
     private val window = mutableListOf<LatLngPoint>()
