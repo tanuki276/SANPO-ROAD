@@ -91,7 +91,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun SanpoRoadApp() {
     val context = LocalContext.current
-    val store = remember { RouteStore(context) }
+    val model: WalkViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val store = model.store
     val preferences = remember { WalkPreferences(context) }
     val scope = rememberCoroutineScope()
     var privacyVersion by remember { mutableIntStateOf(0) }
@@ -112,13 +113,9 @@ fun SanpoRoadApp() {
     var lastSavedRoute by remember { mutableStateOf<SavedRoute?>(null) }
     var weeklyGoalMeters by remember { mutableDoubleStateOf(preferences.weeklyGoalMeters) }
 
-    var routes by remember { mutableStateOf<List<SavedRoute>>(emptyList()) }
-    var loadError by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(syncVersion, accountId) {
-        try { routes = withContext(Dispatchers.IO) { store.getAll() }; loadError = null }
-        catch (e: Exception) { loadError = e.message ?: "記録を読み込めませんでした" }
-    }
-
+    val routes by model.routes.collectAsState()
+    val loadError by model.error.collectAsState()
+    LaunchedEffect(syncVersion, accountId) { model.refresh() }
 
     BackHandler(enabled = screen != AppScreen.MAP) { screen = AppScreen.MAP }
 

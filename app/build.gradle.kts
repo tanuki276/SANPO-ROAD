@@ -10,7 +10,7 @@ android {
     namespace = "com.example.sanporoad"
     compileSdk = 35
     defaultConfig {
-        applicationId = "io.github.tanuki276.sanporoad"
+        applicationId = providers.gradleProperty("SANPO_APPLICATION_ID").orElse("io.github.tanuki276.sanporoad").get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 26
         targetSdk = 35
@@ -65,6 +65,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.compose.ui:ui:1.7.8")
     implementation("androidx.compose.ui:ui-tooling-preview:1.7.8")
     implementation("androidx.compose.material3:material3:1.3.1")

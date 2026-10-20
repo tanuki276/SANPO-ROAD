@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncStatus: String, onChanged: () -> Unit, onSync: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var legal by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var refresh by remember { mutableIntStateOf(0) }
@@ -139,6 +140,10 @@ fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncS
             }
         }
         item {
+            Row { TextButton(onClick = { legal = "terms.md" }) { Text("利用規約") }
+                TextButton(onClick = { legal = "privacy.md" }) { Text("プライバシーポリシー") } }
+        }
+        item {
             SettingsCard("送信する情報") {
                 Text("端末のみ保存：散歩の座標・日時・名前・メモ・写真はアプリ内に保存します。Androidの自動バックアップと端末間転送から除外します。")
                 Text("地図：OpenStreetMapへの地図タイル要求にIPアドレスと表示地域が含まれます。GPS取得には端末の位置情報サービスを使います。")
@@ -147,6 +152,12 @@ fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncS
                 Text("同期OFFは送信済みデータの削除ではありません。記録削除は共有リンクと写真も対象です。通信できない場合のクラウド削除は次回同期時に再試行します。")
             }
         }
+    }
+    legal?.let { name ->
+        var body by remember(name) { mutableStateOf("") }
+        LaunchedEffect(name) { body = withContext(Dispatchers.IO) { context.assets.open(name).bufferedReader().use { it.readText() } } }
+        AlertDialog(onDismissRequest = { legal = null }, title = { Text(if(name == "terms.md") "利用規約" else "プライバシーポリシー") },
+            text = { LazyColumn { item { Text(body) } } }, confirmButton = { TextButton(onClick = { legal = null }) { Text("閉じる") } })
     }
     pendingRevoke?.let { share ->
         AlertDialog(onDismissRequest = { pendingRevoke = null }, title = { Text("共有を停止しますか？") }, text = { Text("「${share.name}」のリンクを無効化します。") },

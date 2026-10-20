@@ -40,3 +40,19 @@ with check (bucket_id <> 'walk-photos' or (public.sanpo_session_active_v1()
  and split_part(storage.objects.name,'/',1)=auth.uid()::text and not exists (
  select 1 from public.sanpo_routes r where r.user_id=auth.uid()
  and r.local_id::text=split_part(split_part(storage.objects.name,'/',2),'.',1) and r.deleted_at is not null)));
+
+alter table public.sanpo_routes add column if not exists photo_hash text;
+alter table public.sanpo_routes add column if not exists source_route_id bigint;
+alter table public.sanpo_routes add column if not exists rest_duration_ms bigint not null default 0;
+create or replace function public.upsert_sanpo_route_v2(p_route jsonb) returns void
+language plpgsql security invoker set search_path = '' as $$
+begin
+ perform public.upsert_sanpo_route_v1(p_route);
+ update public.sanpo_routes set photo_hash=p_route->>'photo_hash',
+ source_route_id=(p_route->>'source_route_id')::bigint,
+ rest_duration_ms=greatest(0,coalesce((p_route->>'rest_duration_ms')::bigint,0))
+ where user_id=auth.uid() and local_id=(p_route->>'local_id')::bigint
+ and client_updated_at=(p_route->>'client_updated_at')::bigint and deleted_at is null;
+end; $$;
+revoke all on function public.upsert_sanpo_route_v2(jsonb) from public, anon;
+grant execute on function public.upsert_sanpo_route_v2(jsonb) to authenticated;

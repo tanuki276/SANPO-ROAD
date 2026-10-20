@@ -65,9 +65,9 @@ object WalkInsights {
     }
 
     fun compareWithPreviousSimilar(route: SavedRoute, routes: List<SavedRoute>): RouteComparison? {
-        val similar = routes.asSequence()
-            .filter { it.id != route.id }
-            .filter { isSimilarRoute(route, it) }
+        val similar = routes.find { it.id == route.sourceRouteId && it.ownerId == route.ownerId } ?: routes.asSequence()
+            .filter { it.id != route.id && it.ownerId == route.ownerId && it.startedAt < route.startedAt }
+            .filter { RouteMatching.sameCourse(route, it) }
             .maxByOrNull { it.startedAt }
             ?: return null
 

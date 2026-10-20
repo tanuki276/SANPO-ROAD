@@ -30,7 +30,7 @@ fun ShareScreen(route: SavedRoute,onClose: () -> Unit,onChanged: () -> Unit) {
         LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)) {
             item { Text(route.name);Text("リンクを知っている人が閲覧できます。写真は公開されません。") }
             item { Row { Checkbox(map,{map=it});Text("地図を含める") };Row {Checkbox(note,{note=it});Text("メモを含める") } }
-            item { Text("有効期限");Row { listOf(1,7,30,null).forEach { value -> TextButton(onClick={days=value}) { Text((if(days==value) "選択：" else "")+(value?.let { "${it}日" } ?: "無期限")) } } }
+            item { Text("有効期限");Row { listOf(1,7,30,null).forEach { value -> TextButton(onClick={days=value}) { Text((if(days==value) "選択：" else "")+(value?.let { "${it}日" } ?: "無期限")) } } } }
             item { Button(enabled=!busy,onClick={action {
                 val url=ShareManager(context).create(route,map,note,days)
                 (context.getSystemService(ClipboardManager::class.java)).setPrimaryClip(ClipData.newPlainText("散歩の共有リンク",url))

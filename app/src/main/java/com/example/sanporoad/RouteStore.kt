@@ -41,7 +41,9 @@ class RouteStore(private val context: Context) {
     fun claimForShare(route: SavedRoute): SavedRoute {
         val account = settings.activeAccountId ?: error("ログインしてください")
         check(route.ownerId == null || route.ownerId == account)
-        val owned = route.copy(ownerId = account)
+        val latest = readAll().find { it.id == route.id && it.ownerId == route.ownerId } ?: error("記録が見つかりません")
+        check(latest.deletedAt == null) { "削除した散歩は共有できません" }
+        val owned = latest.copy(ownerId = account)
         writeAll(readAll().filterNot { it.id == route.id && it.ownerId == route.ownerId } + owned)
         return owned
     }

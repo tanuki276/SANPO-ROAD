@@ -101,9 +101,14 @@ class LocationTrackingService : Service() {
             put(this, KEY_POINTS, "[]")
             put(this, KEY_DISTANCE, 0.0)
             put(this, KEY_LAST_ACCURACY, -1.0)
+            put(this, KEY_RESUMED_AT, 0L)
+            put(this, KEY_FIX_ELAPSED, 0L)
         }
 
         LiveTrackStore.load(this)
+        val recoveredDistance = getPoints(this).zipWithNext().filter { it.first.segment == it.second.segment }
+            .sumOf { RouteMatching.distance(it.first,it.second) }
+        put(this, KEY_DISTANCE, recoveredDistance)
         val request = GpsSettings(this).request()
         try {
             startForeground(NOTIFICATION_ID, buildNotification())

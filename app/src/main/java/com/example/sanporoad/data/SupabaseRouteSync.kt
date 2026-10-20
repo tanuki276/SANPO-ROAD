@@ -84,7 +84,7 @@ object SupabaseRouteSync {
         check(route.ownerId == user)
         var photo = route.photoObjectPath?.takeIf { it.startsWith("$user/") }
         if (route.deletedAt != null) {
-            client.postgrest.rpc("upsert_sanpo_route_v1", buildJsonObject {
+            client.postgrest.rpc("upsert_sanpo_route_v2", buildJsonObject {
                 put("p_route", json.encodeToJsonElement(RemoteRoute.serializer(), RemoteRoute.from(route, user, null)))
             })
         }
@@ -97,8 +97,8 @@ object SupabaseRouteSync {
                 client.storage[PHOTO_BUCKET].upload(photo!!, local) { upsert = true }
             }
         }
-        val payload = RemoteRoute.from(route, user, photo)
-        client.postgrest.rpc("upsert_sanpo_route_v1", buildJsonObject {
+        val payload = RemoteRoute.from(route, user, photo).copy(photoHash = if (syncPhotos && route.deletedAt == null && !route.photoRemoved && route.photoPath != null) route.photoHash else route.syncedPhotoHash)
+        client.postgrest.rpc("upsert_sanpo_route_v2", buildJsonObject {
             put("p_route", json.encodeToJsonElement(RemoteRoute.serializer(), payload))
         })
         photo
@@ -206,14 +206,18 @@ private data class RemoteRoute(
     @SerialName("photo_object_path") val photoObjectPath: String? = null,
     @SerialName("client_updated_at") val updatedAt: Long = 0,
     @SerialName("deleted_at") val deletedAt: Long? = null,
-    val favorite: Boolean = false
+    val favorite: Boolean = false,
+    @SerialName("photo_hash") val photoHash: String? = null,
+    @SerialName("source_route_id") val sourceRouteId: Long? = null,
+    @SerialName("rest_duration_ms") val restDurationMs: Long = 0
 ) {
     fun toLocal() = SavedRoute(localId, name, Instant.parse(startedAt).toEpochMilli(), durationMs,
-        distanceMeters, points, note, null, photoObjectPath, userId, updatedAt, deletedAt, favorite, syncState = "SYNCED")
+        distanceMeters, points, note, null, photoObjectPath, userId, updatedAt, deletedAt, favorite, syncState = "SYNCED", photoHash = photoHash, syncedPhotoHash = photoHash, sourceRouteId = sourceRouteId, restDurationMs = restDurationMs)
     companion object {
         fun from(route: SavedRoute, user: String, photo: String?) = RemoteRoute(user, route.id,
             route.name, Instant.ofEpochMilli(route.startedAt).toString(), route.durationMs,
-            route.distanceMeters, route.points, route.note, photo, route.updatedAt, route.deletedAt, route.favorite)
+            route.distanceMeters, route.points, route.note, photo, route.updatedAt, route.deletedAt, route.favorite,
+            if (photo != null) (if (photo == route.photoObjectPath) route.syncedPhotoHash else route.photoHash) else null, route.sourceRouteId, route.restDurationMs)
     }
 }
 
