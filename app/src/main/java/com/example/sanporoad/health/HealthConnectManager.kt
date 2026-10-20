@@ -32,11 +32,13 @@ internal class HealthConnectManager(private val context: Context) {
             device=Device(type=Device.TYPE_PHONE), clientRecordId="sanpo:${route.id}:${route.startedAt}:$suffix",
             clientRecordVersion=route.updatedAt.coerceAtLeast(1))
         val pauses = route.restIntervals.filter { it.startMs >= route.startedAt && it.endMs > it.startMs && it.endMs <= end.toEpochMilli() }
-            .map { ExerciseSegment(Instant.ofEpochMilli(it.startMs), Instant.ofEpochMilli(it.endMs), ExerciseSegment.SEGMENT_TYPE_PAUSE) }
+            .map { ExerciseSegment(Instant.ofEpochMilli(it.startMs), Instant.ofEpochMilli(it.endMs), ExerciseSegment.EXERCISE_SEGMENT_TYPE_PAUSE) }
         client.insertRecords(listOf(
-            ExerciseSessionRecord(startTime=start,endTime=end,exerciseType=ExerciseSessionRecord.EXERCISE_TYPE_WALKING,
+            ExerciseSessionRecord(startTime=start,startZoneOffset=java.time.ZoneId.systemDefault().rules.getOffset(start),
+                endTime=end,endZoneOffset=java.time.ZoneId.systemDefault().rules.getOffset(end),exerciseType=ExerciseSessionRecord.EXERCISE_TYPE_WALKING,
                 title=route.name,notes="SANPO 移動 ${route.durationMs}ms / 休憩 ${route.restDurationMs}ms",segments=pauses,metadata=metadata("walk")),
-            DistanceRecord(startTime=start,endTime=end,distance=Length.meters(route.distanceMeters),metadata=metadata("distance"))
+            DistanceRecord(startTime=start,startZoneOffset=java.time.ZoneId.systemDefault().rules.getOffset(start),
+                endTime=end,endZoneOffset=java.time.ZoneId.systemDefault().rules.getOffset(end),distance=Length.meters(route.distanceMeters),metadata=metadata("distance"))
         ))
         return "Health Connectに送信済み"
     }
