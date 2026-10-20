@@ -1,0 +1,69 @@
+name: Signed release APK
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag (must match SANPO_VERSION_NAME)
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      SANPO_STORE_PASSWORD: ${{ secrets.SANPO_STORE_PASSWORD }}
+      SANPO_KEY_ALIAS: ${{ secrets.SANPO_KEY_ALIAS }}
+      SANPO_KEY_PASSWORD: ${{ secrets.SANPO_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Configure signing path
+        run: echo "SANPO_KEYSTORE_PATH=$RUNNER_TEMP/sanpo-release.jks" >> "$GITHUB_ENV"
+      - name: Validate tag and signing configuration
+        env:
+          KEYSTORE_BASE64: ${{ secrets.SANPO_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]
+          git show-ref --verify "refs/tags/$RELEASE_TAG"
+          git merge-base --is-ancestor "refs/tags/$RELEASE_TAG" origin/main
+          git checkout --detach "refs/tags/$RELEASE_TAG"
+          test "v$(sed -n 's/^SANPO_VERSION_NAME=//p' gradle.properties)" = "$RELEASE_TAG"
+          test -n "$KEYSTORE_BASE64" && test -n "$SANPO_STORE_PASSWORD" && test -n "$SANPO_KEY_ALIAS" && test -n "$SANPO_KEY_PASSWORD"
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$SANPO_KEYSTORE_PATH"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build and test release
+        run: gradle --no-daemon --console=plain testReleaseUnitTest assembleRelease
+      - name: Verify signature and checksum
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp app/build/outputs/apk/release/app-release.apk "dist/SANPO-ROAD-$RELEASE_TAG.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "dist/SANPO-ROAD-$RELEASE_TAG.apk"
+          cd dist
+          sha256sum "SANPO-ROAD-$RELEASE_TAG.apk" > SHA256SUMS
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --title "SANPO-ROAD $RELEASE_TAG" --notes-file CHANGELOG.md
+      - name: Remove signing key
+        if: always()
+        run: rm -f "$SANPO_KEYSTORE_PATH"
+
+

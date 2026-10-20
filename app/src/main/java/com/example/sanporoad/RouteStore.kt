@@ -1,87 +1,156 @@
 package com.example.sanporoad
 
 import android.content.Context
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
-class RouteStore(context: Context) {
-    private val prefs = context.getSharedPreferences("sanpo_routes", Context.MODE_PRIVATE)
-    private val json = Json { ignoreUnknownKeys = true }
-    private val routesSerializer = ListSerializer(SavedRoute.serializer())
+class RouteStore(private val context: Context) {
+    private val repository = RouteRepository(context)
+    private val settings = WalkPreferences(context)
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val serializer = ListSerializer(SavedRoute.serializer())
 
     @Synchronized
-    fun getAll(): List<SavedRoute> = readAll().sortedByDescending { it.startedAt }
+    fun getAll(): List<SavedRoute> = visible().filter { it.deletedAt == null }.sortedByDescending { it.startedAt }
+
+    @Synchronized
+    private fun visible(): List<SavedRoute> = readAll().filter {
+        it.ownerId == null || it.ownerId == settings.activeAccountId
+    }
 
     @Synchronized
     fun save(route: SavedRoute) {
-        val merged = readAll().associateBy { it.id }.toMutableMap().apply {
-            put(route.id, route)
-        }.values.toList()
-        writeAll(merged)
+        val previous = repository.all().find { it.id == route.id && it.ownerId == route.ownerId }
+        val owned = route.copy(imported = route.imported || previous?.imported == true, ownerId = route.ownerId ?: settings.activeAccountId,
+            updatedAt = maxOf(System.currentTimeMillis(), route.updatedAt + 1), syncState = "PENDING",
+            photoHash = PhotoStore.hash(route.photoPath))
+        check(route.ownerId == null || route.ownerId == settings.activeAccountId)
+        repository.ensureMigrated()
+        repository.put(owned)
+    }
+
+    @Synchronized
+    fun saveImported(routes: List<SavedRoute>) {
+        repository.ensureMigrated()
+        val all=readAll()
+        val imports=routes.map { it.copy(imported=true,ownerId=settings.activeAccountId,
+            updatedAt=System.currentTimeMillis(),syncState="PENDING",photoHash=PhotoStore.hash(it.photoPath)) }
+        require(imports.none { imported -> all.any { it.id==imported.id && it.ownerId==imported.ownerId } })
+        repository.replaceAll(all+imports)
+    }
+
+    @Synchronized
+    private fun upsert(route: SavedRoute) {
+        repository.ensureMigrated()
+        repository.put(route)
+    }
+
+    @Synchronized
+    fun claimForShare(route: SavedRoute): SavedRoute {
+        val account = settings.activeAccountId ?: error("ログインしてください")
+        check(route.ownerId == null || route.ownerId == account)
+        val latest = readAll().find { it.id == route.id && it.ownerId == route.ownerId } ?: error("記録が見つかりません")
+        check(latest.deletedAt == null) { "削除した散歩は共有できません" }
+        val owned = latest.copy(ownerId = account)
+        writeAll(readAll().filterNot { it.id == route.id && it.ownerId == route.ownerId } + owned)
+        return owned
+    }
+
+    @Synchronized
+    fun delete(route: SavedRoute) {
+        val stamp = maxOf(System.currentTimeMillis(), route.updatedAt + 1)
+        // Persist deletion before removing any photo. Keep a tombstone for offline retries.
+        upsert(route.copy(deletedAt = stamp, updatedAt = stamp, name = "削除済み", note = "",
+            points = emptyList(), distanceMeters = 0.0, durationMs = 0, photoPath = null, syncState = "PENDING"))
+        PhotoStore.localFile(route.photoPath)?.delete()
+    }
+
+    @Synchronized
+    fun deleteVisible() { getAll().forEach(::delete) }
+
+    @Synchronized
+    fun eraseAccountLocally(account: String) {
+        val all = readAll()
+        writeAll(all.filterNot { it.ownerId == account })
+        all.filter { it.ownerId == account }.forEach { PhotoStore.localFile(it.photoPath)?.delete() }
+    }
+
+    @Synchronized
+    private fun adoptGuestRecords(account: String, remote: List<SavedRoute>) {
+        val all = readAll().toMutableList()
+        all.indices.forEach { index ->
+            val route = all[index]
+            if (route.ownerId == null) {
+                val other = remote.find { it.id == route.id } ?: all.find { it.id == route.id && it.ownerId == account }
+                // Legacy timestamp IDs can collide across devices. Preserve both walks.
+                val collision = other != null && (other.startedAt != route.startedAt || other.points != route.points)
+                val id = if (collision) java.util.UUID.randomUUID().mostSignificantBits.and(Long.MAX_VALUE) else route.id
+                all[index] = route.copy(id = id, ownerId = account)
+            }
+        }
+        writeAll(all.groupBy { it.ownerId to it.id }.values.map { copies ->
+            copies.reduce { a, b -> mergeRoute(a, b) }
+        })
     }
 
     @Synchronized
     fun merge(routes: List<SavedRoute>) {
-        if (routes.isEmpty()) return
-        val merged = readAll().associateBy { it.id }.toMutableMap()
+        val all = readAll().associateBy { it.ownerId to it.id }.toMutableMap()
         routes.forEach { remote ->
-            val local = merged[remote.id]
-            merged[remote.id] = if (local != null) {
-                // Cloud rows intentionally don't carry a device-local file path. Keep the local
-                // photo so the walk remains viewable offline, while adopting the remote object path
-                // for cloud-backed display when this device has no local copy.
-                remote.copy(
-                    photoPath = local.photoPath ?: remote.photoPath,
-                    photoObjectPath = remote.photoObjectPath ?: local.photoObjectPath
-                )
-            } else {
-                remote
-            }
+            val key = remote.ownerId to remote.id
+            val previous = all[key]
+            val merged = mergeRoute(previous, remote)
+            all[key] = merged
         }
-        writeAll(merged.values.toList())
+        val old = readAll()
+        writeAll(all.values.toList())
+        old.filter { route -> all[route.ownerId to route.id]?.deletedAt != null }.forEach {
+            PhotoStore.localFile(it.photoPath)?.delete()
+        }
     }
 
-    suspend fun syncAll(): SyncResult {
-        val local = getAll()
-        var uploaded = 0
-        var failedUploads = 0
-
+    suspend fun syncAll(): SyncResult = operations.withLock {
+        check(settings.cloudSync) { "クラウド同期はOFFです" }
+        val account = SupabaseRouteSync.prepareAccount()
+        check(account == settings.activeAccountId) { "アカウントを確認してください" }
+        val remote = SupabaseRouteSync.pull().getOrThrow()
+        check(settings.cloudSync && settings.activeAccountId == account)
+        adoptGuestRecords(account, remote)
+        merge(remote) // Restore BEFORE upload: reinstall must never replace the server with stale data.
+        var failed = 0
+        val local = visible().filter { it.ownerId == account && (it.syncState != "SYNCED" ||
+            (settings.photoSync && it.deletedAt == null && it.photoHash != it.syncedPhotoHash)) }
         local.forEach { route ->
-            if (SupabaseRouteSync.push(route).isSuccess) uploaded++ else failedUploads++
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            check(settings.cloudSync && settings.activeAccountId == account)
+            SupabaseRouteSync.push(route, settings.photoSync).onSuccess { path ->
+                synchronized(this) {
+                    val current = readAll().find { it.ownerId == account && it.id == route.id }
+                    if (current?.updatedAt == route.updatedAt) upsert(current.copy(photoObjectPath = path, syncState = "SYNCED",
+                        syncedPhotoHash = if (settings.photoSync) route.photoHash else current.syncedPhotoHash))
+                }
+            }.onFailure { failed++ }
         }
-
-        val pulled = SupabaseRouteSync.pull()
-        if (pulled.isSuccess) merge(pulled.getOrDefault(emptyList()))
-
-        return SyncResult(
-            uploaded = uploaded,
-            failedUploads = failedUploads,
-            downloaded = pulled.getOrDefault(emptyList()).size,
-            cloudAvailable = pulled.isSuccess || uploaded > 0
-        )
+        SyncResult(local.size - failed, failed, remote.count { it.deletedAt == null }, true)
     }
 
-    suspend fun syncRoute(route: SavedRoute): Boolean = SupabaseRouteSync.push(route).isSuccess
-
-    private fun readAll(): List<SavedRoute> {
-        val raw = prefs.getString("routes", "[]") ?: "[]"
-        return runCatching { json.decodeFromString(routesSerializer, raw) }
-            .getOrDefault(emptyList())
-    }
-
-    private fun writeAll(routes: List<SavedRoute>) {
-        check(prefs.edit().putString("routes", json.encodeToString(routesSerializer, routes)).commit()) {
-            "Unable to persist walk records"
+    suspend fun flushDeletes() = operations.withLock {
+        val account = SupabaseRouteSync.prepareAccount()
+        check(account == settings.activeAccountId)
+        check(settings.cloudSync) { "クラウド同期はOFFです" }
+        visible().filter { it.ownerId == account && it.deletedAt != null }.forEach {
+            SupabaseRouteSync.push(it, false).getOrThrow()
         }
     }
+
+    private fun readAll(): List<SavedRoute> = repository.all()
+    private fun writeAll(routes: List<SavedRoute>) = repository.replaceAll(routes)
+    companion object { val operations = Mutex() }
 }
 
-data class SyncResult(
-    val uploaded: Int,
-    val failedUploads: Int,
-    val downloaded: Int,
-    val cloudAvailable: Boolean
-)
+data class SyncResult(val uploaded: Int, val failedUploads: Int, val downloaded: Int, val cloudAvailable: Boolean)
+
 

@@ -43,7 +43,7 @@ object WalkInsights {
         return (count - 1 downTo 0).map { offset ->
             val start = currentWeek.minusWeeks(offset.toLong())
             val end = start.plusDays(6)
-            val matched = routes.filter {
+            val matched = routes.filter { !it.imported && it.deletedAt == null }.filter {
                 val date = routeDate(it, zone)
                 !date.isBefore(start) && !date.isAfter(end)
             }
@@ -56,7 +56,7 @@ object WalkInsights {
         month: YearMonth = YearMonth.now(),
         zone: ZoneId = ZoneId.systemDefault()
     ): List<CalendarDaySummary> {
-        val grouped = routes.groupBy { routeDate(it, zone) }
+        val grouped = routes.filter { !it.imported && it.deletedAt == null }.groupBy { routeDate(it, zone) }
         return (1..month.lengthOfMonth()).map { day ->
             val date = month.atDay(day)
             val dayRoutes = grouped[date].orEmpty()
@@ -65,9 +65,11 @@ object WalkInsights {
     }
 
     fun compareWithPreviousSimilar(route: SavedRoute, routes: List<SavedRoute>): RouteComparison? {
-        val similar = routes.asSequence()
-            .filter { it.id != route.id }
-            .filter { isSimilarRoute(route, it) }
+        if (route.imported) return null
+        val eligible = routes.filter { !it.imported && it.deletedAt == null }
+        val similar = eligible.find { it.id == route.sourceRouteId && it.ownerId == route.ownerId } ?: eligible.asSequence()
+            .filter { it.id != route.id && it.ownerId == route.ownerId && it.startedAt < route.startedAt }
+            .filter { RouteMatching.sameCourse(route, it) }
             .maxByOrNull { it.startedAt }
             ?: return null
 
@@ -110,3 +112,5 @@ object WalkInsights {
         return r * 2 * atan2(sqrt(x), sqrt(1 - x))
     }
 }
+
+

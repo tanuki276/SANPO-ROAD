@@ -3,21 +3,39 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("org.jetbrains.kotlin.kapt")
 }
 
 android {
     namespace = "com.example.sanporoad"
-    compileSdk = 35
+    compileSdk = 36
     defaultConfig {
-        applicationId = "com.example.sanporoad"
+        applicationId = providers.gradleProperty("SANPO_APPLICATION_ID").orElse("io.github.tanuki276.sanporoad").get()
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = providers.gradleProperty("SANPO_VERSION_CODE").get().toInt()
+        versionName = providers.gradleProperty("SANPO_VERSION_NAME").get()
 
         buildConfigField("String", "SUPABASE_URL", "\"https://djkolanmyxvqmegqpvlp.supabase.co\"")
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_BkB1dj8UPD9cxgpfhJT5IA__tEsmfoe\"")
         buildConfigField("String", "SHARE_API_URL", "\"https://sanpo-road-share.vercel.app/api/share\"")
+    }
+    signingConfigs {
+        if (!System.getenv("SANPO_KEYSTORE_PATH").isNullOrBlank()) {
+            create("release") {
+                storeFile = file(System.getenv("SANPO_KEYSTORE_PATH"))
+                storePassword = System.getenv("SANPO_STORE_PASSWORD")
+                keyAlias = System.getenv("SANPO_KEY_ALIAS")
+                keyPassword = System.getenv("SANPO_KEY_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.findByName("release")
+            isMinifyEnabled = false
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
@@ -33,13 +51,22 @@ android {
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
 
+kapt { arguments { arg("room.schemaLocation", "$projectDir/schemas") } }
+
 dependencies {
+    implementation("androidx.health.connect:connect-client:1.1.0")
+    implementation("androidx.room:room-runtime:2.6.1")
+    kapt("androidx.room:room-compiler:2.6.1")
+    androidTestImplementation("androidx.room:room-testing:2.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
     testImplementation("junit:junit:4.13.2")
-    implementation("androidx.compose.material:material-icons-core:1.7.8")
+    implementation("androidx.compose.material:material-icons-extended:1.7.8")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.compose.ui:ui:1.7.8")
     implementation("androidx.compose.ui:ui-tooling-preview:1.7.8")
     implementation("androidx.compose.material3:material3:1.3.1")
@@ -57,4 +84,6 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling:1.7.8")
 }
+
+
 

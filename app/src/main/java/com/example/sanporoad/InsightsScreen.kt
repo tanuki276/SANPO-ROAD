@@ -22,6 +22,7 @@ import java.util.Locale
 fun WalkInsightsScreen(
     routes: List<SavedRoute>,
     weeklyGoalMeters: Double,
+    onRecordChanged: () -> Unit = {},
     onWeeklyGoalChange: (Double) -> Unit
 ) {
     val stats = remember(routes) { WalkStats.calculate(routes) }
@@ -57,9 +58,15 @@ fun WalkInsightsScreen(
             )
         }
         routes.firstOrNull()?.let { latest ->
-            item { ShareLatestWalkCard(latest) }
+            item { ShareLatestWalkCard(latest, onRecordChanged) }
         }
         item { WeeklyChart(weeks) }
+        item {
+            Text("月別タグ集計（インポート記録を除く）")
+            routes.filter { !it.imported && it.deletedAt == null && java.time.YearMonth.from(java.time.Instant.ofEpochMilli(it.startedAt).atZone(java.time.ZoneId.systemDefault())) == month }
+                .flatMap { route -> route.tags.distinct().map { it to route.distanceMeters } }
+                .groupBy({it.first},{it.second}).toSortedMap().forEach { (tag, meters) -> Text("$tag ${fmtKm(meters.sum())}") }
+        }
         item {
             MonthCalendar(
                 month = month,
@@ -107,152 +114,12 @@ fun WalkInsightsScreen(
 }
 
 @Composable
-private fun ShareLatestWalkCard(route: SavedRoute) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var confirm by remember(route.id) { mutableStateOf(false) }
-    var shareMap by remember(route.id) { mutableStateOf(false) }
-    var sharing by remember(route.id) { mutableStateOf(false) }
-    var error by remember(route.id) { mutableStateOf<String?>(null) }
-
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-    ) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top
-            ) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(
-                        "最新の散歩をシェア",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(route.name, style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "${fmtKm(route.distanceMeters)}  ·  ${fmtDuration(route.durationMs)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
-                    )
-                }
-                AssistChip(
-                    onClick = {},
-                    label = { Text("地図OFFが標準") },
-                    enabled = false
-                )
-            }
-            Text(
-                "ネッ友やSNSに送るときも、地図を出さずに距離・時間・メモだけ共有できます。",
-                style = MaterialTheme.typography.bodySmall
-            )
-            Button(
-                onClick = { confirm = true },
-                enabled = !sharing,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(if (sharing) "リンクを作成中…" else "共有リンクを作る")
-            }
-        }
-    }
-
-    if (confirm) {
-        AlertDialog(
-            onDismissRequest = { confirm = false },
-            title = { Text("共有する内容を選ぶ") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text(
-                        "距離・時間・メモは共有されます。写真は共有されません。",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (shareMap) MaterialTheme.colorScheme.errorContainer
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Text(
-                                    "地図・散歩ルートを共有",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    if (shareMap)
-                                        "ON：スタート・ゴールを含むルート座標がリンク先に表示されます。"
-                                    else
-                                        "OFF：ルート座標は共有データに保存されません。",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                            Switch(checked = shareMap, onCheckedChange = { shareMap = it })
-                        }
-                    }
-                    if (shareMap) {
-                        Text(
-                            "自宅付近から歩き始めた記録は、生活圏が推測される場合があります。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    } else {
-                        Text(
-                            "プライバシー優先：地図なしで共有します。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Text(
-                        "リンクを知っている人は閲覧できます。",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    confirm = false
-                    sharing = true
-                    scope.launch {
-                        SupabaseRouteSync.createShareLink(route, shareMap)
-                            .onSuccess { url ->
-                                val text = buildString {
-                                    appendLine(route.name)
-                                    appendLine("${fmtKm(route.distanceMeters)} / ${fmtDuration(route.durationMs)}")
-                                    if (!shareMap) appendLine("地図なしで共有")
-                                    append(url)
-                                }
-                                val intent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(Intent.EXTRA_TEXT, text)
-                                }
-                                context.startActivity(Intent.createChooser(intent, "散歩結果を共有"))
-                            }
-                            .onFailure {
-                                error = "共有リンクを作成できませんでした。少し待ってからもう一度お試しください。"
-                            }
-                        sharing = false
-                    }
-                }) { Text(if (shareMap) "地図つきで共有" else "地図なしで共有") }
-            },
-            dismissButton = { TextButton(onClick = { confirm = false }) { Text("キャンセル") } }
-        )
-    }
-
-    error?.let { message ->
-        AlertDialog(
-            onDismissRequest = { error = null },
-            title = { Text("共有できませんでした") },
-            text = { Text(message) },
-            confirmButton = { TextButton(onClick = { error = null }) { Text("OK") } }
-        )
-    }
+private fun ShareLatestWalkCard(route: SavedRoute, onRecordChanged: () -> Unit) {
+    var show by remember { mutableStateOf(false) }
+    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
+        Text(route.name); Button(onClick = { show = true }) { Text("この散歩を共有") }
+    } }
+    if (show) ShareScreen(route, onClose = { show = false }, onChanged = onRecordChanged)
 }
 
 @Composable
@@ -410,3 +277,5 @@ private fun fmtDuration(ms: Long): String {
     val totalMinutes = ms.coerceAtLeast(0L) / 60_000L
     return if (totalMinutes >= 60) "${totalMinutes / 60}時間${totalMinutes % 60}分" else "${totalMinutes}分"
 }
+
+

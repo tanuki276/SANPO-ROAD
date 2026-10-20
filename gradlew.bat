@@ -9,3 +9,4 @@ IF NOT EXIST "%CLASSPATH%" (
 )
 
 java -classpath "%CLASSPATH%" org.gradle.wrapper.GradleWrapperMain %*
+
