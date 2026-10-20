@@ -12,11 +12,6 @@ function showState(name) {
   state.error.hidden = name !== 'error'
 }
 
-function formatKm(meters) {
-  const value = Number(meters)
-  return `${(Number.isFinite(value) ? Math.max(0, value) : 0) / 1000.0.toFixed?.(2) || '0.00'} km`
-}
-
 function formatDistance(meters) {
   const value = Number(meters)
   const km = (Number.isFinite(value) ? Math.max(0, value) : 0) / 1000
@@ -99,6 +94,15 @@ function renderMap(data) {
     mapHint.textContent = '位置情報は非公開'
     privacyTitle.textContent = '地図なしで共有'
     privacyText.textContent = 'この共有データには散歩ルートの座標が含まれていません。'
+    return
+  }
+
+  if (typeof L === 'undefined') {
+    mapElement.hidden = true
+    routeOff.hidden = false
+    mapHint.textContent = '地図を読み込めませんでした'
+    privacyTitle.textContent = '地図つきで共有'
+    privacyText.textContent = 'ルートは共有されていますが、現在地図を表示できません。'
     return
   }
 
