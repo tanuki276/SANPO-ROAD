@@ -84,7 +84,7 @@ object SupabaseRouteSync {
         check(route.ownerId == user)
         var photo = route.photoObjectPath?.takeIf { it.startsWith("$user/") }
         if (route.deletedAt != null) {
-            client.postgrest.rpc("upsert_sanpo_route_v2", buildJsonObject {
+            client.postgrest.rpc("upsert_sanpo_route_v3", buildJsonObject {
                 put("p_route", json.encodeToJsonElement(RemoteRoute.serializer(), RemoteRoute.from(route, user, null)))
             })
         }
@@ -98,7 +98,7 @@ object SupabaseRouteSync {
             }
         }
         val payload = RemoteRoute.from(route, user, photo).copy(photoHash = if (syncPhotos && route.deletedAt == null && !route.photoRemoved && route.photoPath != null) route.photoHash else route.syncedPhotoHash)
-        client.postgrest.rpc("upsert_sanpo_route_v2", buildJsonObject {
+        client.postgrest.rpc("upsert_sanpo_route_v3", buildJsonObject {
             put("p_route", json.encodeToJsonElement(RemoteRoute.serializer(), payload))
         })
         photo
@@ -134,7 +134,7 @@ object SupabaseRouteSync {
             put("p_started_at", Instant.ofEpochMilli(route.startedAt).toString())
             put("p_duration_ms", route.durationMs)
             put("p_distance_meters", route.distanceMeters)
-            put("p_points", json.encodeToJsonElement(ListSerializer(LatLngPoint.serializer()), if (shareMap) route.points else emptyList()))
+            put("p_points", json.encodeToJsonElement(ListSerializer(LatLngPoint.serializer()), if (shareMap) RoutePrivacy.mask(route.points) else emptyList()))
             put("p_note", if (shareNote) route.note else "")
             put("p_expires_at", expiryDays?.let { Instant.now().plusSeconds(it.toLong()*86400).toString() }?.let(::JsonPrimitive) ?: JsonNull)
             put("p_share_map", shareMap)
@@ -209,15 +209,21 @@ private data class RemoteRoute(
     val favorite: Boolean = false,
     @SerialName("photo_hash") val photoHash: String? = null,
     @SerialName("source_route_id") val sourceRouteId: Long? = null,
-    @SerialName("rest_duration_ms") val restDurationMs: Long = 0
+    @SerialName("rest_duration_ms") val restDurationMs: Long = 0,
+    val tags: List<String> = emptyList(),
+    val imported: Boolean = false,
+    @SerialName("import_key") val importKey: String? = null,
+    @SerialName("gps_quality") val gpsQuality: GpsQualityReport? = null,
+    @SerialName("rest_intervals") val restIntervals: List<RestInterval> = emptyList()
 ) {
     fun toLocal() = SavedRoute(localId, name, Instant.parse(startedAt).toEpochMilli(), durationMs,
-        distanceMeters, points, note, null, photoObjectPath, userId, updatedAt, deletedAt, favorite, syncState = "SYNCED", photoHash = photoHash, syncedPhotoHash = photoHash, sourceRouteId = sourceRouteId, restDurationMs = restDurationMs)
+        distanceMeters, points, note, null, photoObjectPath, userId, updatedAt, deletedAt, favorite, syncState = "SYNCED", photoHash = photoHash, syncedPhotoHash = photoHash, sourceRouteId = sourceRouteId, restDurationMs = restDurationMs, tags=tags, imported=imported, importKey=importKey, gpsQuality=gpsQuality, restIntervals=restIntervals)
     companion object {
         fun from(route: SavedRoute, user: String, photo: String?) = RemoteRoute(user, route.id,
             route.name, Instant.ofEpochMilli(route.startedAt).toString(), route.durationMs,
             route.distanceMeters, route.points, route.note, photo, route.updatedAt, route.deletedAt, route.favorite,
-            if (photo != null) (if (photo == route.photoObjectPath) route.syncedPhotoHash else route.photoHash) else null, route.sourceRouteId, route.restDurationMs)
+            if (photo != null) (if (photo == route.photoObjectPath) route.syncedPhotoHash else route.photoHash) else null, route.sourceRouteId, route.restDurationMs, route.tags, route.imported, route.importKey, route.gpsQuality, route.restIntervals)
     }
 }
+
 

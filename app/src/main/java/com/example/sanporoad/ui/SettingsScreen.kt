@@ -53,10 +53,22 @@ fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncS
         if (uri != null) action {
             withContext(Dispatchers.IO) {
                 val routes = store.getAll()
-                val text = when (exportFormat) { "gpx" -> RouteExport.gpx(routes); "csv" -> RouteExport.csv(routes); else -> RouteExport.json(routes) }
+                val text = when (exportFormat) { "gpx" -> RouteExport.gpx(routes); "csv" -> RouteExport.csv(routes); else -> RouteBackup.encode(context, routes) }
                 context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter(Charsets.UTF_8)?.use { it.write(text) } ?: error("保存先を開けませんでした")
             }
             message = "エクスポートしました"
+        }
+    }
+    val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) action {
+            val count=withContext(Dispatchers.IO) {
+                val bytes=context.contentResolver.openInputStream(uri)?.use { input ->
+                    val output=java.io.ByteArrayOutputStream(); val buffer=ByteArray(8192)
+                    while(true) { val n=input.read(buffer); if(n<0) break; require(output.size()+n<=RouteBackup.MAX_BYTES) { "JSONは50MBまでです" }; output.write(buffer,0,n) }; output.toByteArray() } ?: error("ファイルを開けません")
+                require(bytes.size <= RouteBackup.MAX_BYTES) { "JSONは50MBまでです" }
+                RouteBackup.restore(context,store,bytes.toString(Charsets.UTF_8))
+            }
+            message="${count}件を復元しました（自己記録の対象外・重複はスキップ）"
         }
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -130,7 +142,9 @@ fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncS
         }
         item {
             SettingsCard("データの持ち出し・削除") {
-                Text("GPXには道筋と地点の時刻、CSVには概要、JSONには道筋を含む記録を出力します。写真は含みません。")
+                Text("GPXは道筋、CSVは概要、JSONは道筋・タグ・GPS品質・端末内の写真を含むバックアップです。")
+                Text("復元記録は自己ベスト・目標・連続日数の対象外です。Health Connectへは送信しません。既存記録は上書きしません。")
+                OutlinedButton(enabled=!busy && !recording,onClick={importer.launch(arrayOf("application/json","text/plain","application/octet-stream"))}) { Text("SANPO JSONから復元") }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("gpx", "csv", "json").forEach { format ->
                         OutlinedButton(enabled = !busy, onClick = { exportFormat = format; confirmation = "export" }) { Text(format.uppercase()) }
@@ -225,3 +239,4 @@ private fun SettingSwitch(label: String, description: String, checked: Boolean, 
         Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
     }
 }
+

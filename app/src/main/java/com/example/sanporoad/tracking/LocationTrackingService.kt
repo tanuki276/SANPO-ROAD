@@ -22,6 +22,7 @@ import org.osmdroid.util.GeoPoint
 import kotlin.math.*
 
 class LocationTrackingService : Service() {
+    private var distanceAccumulator: GpsDistanceAccumulator? = null
     private val fused by lazy { LocationServices.getFusedLocationProviderClient(this) }
 
     private val worker = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
@@ -31,8 +32,10 @@ class LocationTrackingService : Service() {
                 if (!isRecording(this@LocationTrackingService) || isPaused(this@LocationTrackingService)) return@launch
                 try {
                     val accepted = mutableListOf<LatLngPoint>()
-                    var previous = getPoints(this@LocationTrackingService).lastOrNull()
-                    var distance = getDistanceMeters(this@LocationTrackingService)
+                    val accumulator = distanceAccumulator ?: LiveTrackStore.accumulator(this@LocationTrackingService) ?: GpsDistanceAccumulator().also { restored ->
+                        getPoints(this@LocationTrackingService).forEach { restored.add(it) }
+                        distanceAccumulator = restored
+                    }
                     val now = SystemClock.elapsedRealtimeNanos()
                     for (loc in result.locations.sortedBy { it.elapsedRealtimeNanos }) {
                         if (!isFreshFix(now, loc.elapsedRealtimeNanos) || loc.time < getStartedAt(this@LocationTrackingService)) continue
@@ -44,14 +47,13 @@ class LocationTrackingService : Service() {
                         }
                         val candidate = LatLngPoint(loc.latitude,loc.longitude,loc.time,accuracy,
                             prefs(this@LocationTrackingService).getLong(KEY_SEGMENT,0).toInt())
-                        val delta = GpsTrackFilter.segmentMeters(previous,candidate,
-                            if(loc.hasSpeed()) loc.speed else null, GpsSettings(this@LocationTrackingService).mode.filter) ?: continue
-                        accepted += candidate; previous = candidate; distance += delta
+                        // Store every valid map fix, including fixes inside the distance deadband.
+                        if (accumulator.add(candidate, if(loc.hasSpeed()) loc.speed else null,
+                                GpsSettings(this@LocationTrackingService).mode.filter)) accepted += candidate
                     }
-                    if (accepted.isNotEmpty()) {
-                        LiveTrackStore.append(this@LocationTrackingService, accepted)
-                        put(this@LocationTrackingService,KEY_DISTANCE,distance)
-                    }
+                    LiveTrackStore.append(this@LocationTrackingService, accepted, accumulator)
+                    put(this@LocationTrackingService,KEY_DISTANCE,accumulator.distanceMeters)
+                    put(this@LocationTrackingService, "gpsQuality", kotlinx.serialization.json.Json.encodeToString(GpsQualityReport.serializer(), accumulator.report()))
                     updateNotification()
                 } catch (_: Exception) { pauseTracking(); updateNotification() }
             }
@@ -90,11 +92,14 @@ class LocationTrackingService : Service() {
             return
         }
         if (!isRecording(this)) {
+            distanceAccumulator = GpsDistanceAccumulator()
+            put(this, "gpsQuality", "")
             put(this, KEY_RECORDING, true)
             put(this, KEY_PENDING, false)
             put(this, KEY_STARTED_AT, System.currentTimeMillis())
             put(this, KEY_SESSION_ID, java.util.UUID.randomUUID().mostSignificantBits.and(Long.MAX_VALUE))
             put(this, KEY_PAUSED_AT, 0L)
+            put(this, "restIntervals", "[]")
             put(this, KEY_PAUSED_TOTAL, 0L)
             put(this, KEY_SEGMENT, 0L)
             put(this, KEY_STOPPED_AT, 0L)
@@ -106,9 +111,11 @@ class LocationTrackingService : Service() {
         }
 
         LiveTrackStore.load(this)
-        val recoveredDistance = getPoints(this).zipWithNext().filter { it.first.segment == it.second.segment }
-            .sumOf { RouteMatching.distance(it.first,it.second) }
-        put(this, KEY_DISTANCE, recoveredDistance)
+        if (distanceAccumulator == null) distanceAccumulator = LiveTrackStore.accumulator(this) ?: GpsDistanceAccumulator().also { accumulator ->
+            getPoints(this).forEach { accumulator.add(it) }
+        }
+        put(this, KEY_DISTANCE, distanceAccumulator!!.distanceMeters)
+        put(this, "gpsQuality", kotlinx.serialization.json.Json.encodeToString(GpsQualityReport.serializer(), distanceAccumulator!!.report()))
         val request = GpsSettings(this).request()
         try {
             startForeground(NOTIFICATION_ID, buildNotification())
@@ -144,6 +151,8 @@ class LocationTrackingService : Service() {
     private fun finishPause() {
         val pausedAt = prefs(this).getLong(KEY_PAUSED_AT, 0L)
         if (pausedAt > 0L) {
+            val intervals = getRestIntervals(this) + RestInterval(pausedAt, System.currentTimeMillis().coerceAtLeast(pausedAt))
+            put(this, "restIntervals", kotlinx.serialization.json.Json.encodeToString(kotlinx.serialization.builtins.ListSerializer(RestInterval.serializer()), intervals))
             put(this, KEY_PAUSED_TOTAL, prefs(this).getLong(KEY_PAUSED_TOTAL, 0L) + (System.currentTimeMillis() - pausedAt).coerceAtLeast(0))
             put(this, KEY_PAUSED_AT, 0L)
         }
@@ -291,7 +300,15 @@ class LocationTrackingService : Service() {
         }.getOrDefault(0.0)
 
         fun getSourceRouteId(context: Context) = prefs(context).getLong(KEY_SOURCE, 0).takeIf { it > 0 }
-        fun getRestDurationMs(context: Context) = prefs(context).getLong(KEY_PAUSED_TOTAL, 0)
+        fun getRestDurationMs(context: Context): Long = prefs(context).getLong(KEY_PAUSED_TOTAL, 0) +
+            prefs(context).getLong(KEY_PAUSED_AT, 0).takeIf { it > 0 }?.let { (System.currentTimeMillis()-it).coerceAtLeast(0) }.orEmptyDuration()
+        private fun Long?.orEmptyDuration() = this ?: 0L
+        fun getRestIntervals(context: Context): List<RestInterval> = runCatching {
+            kotlinx.serialization.json.Json.decodeFromString<List<RestInterval>>(prefs(context).getString("restIntervals", "[]").orEmpty())
+        }.getOrDefault(emptyList())
+        fun getGpsQuality(context: Context): GpsQualityReport? = runCatching {
+            kotlinx.serialization.json.Json.decodeFromString<GpsQualityReport>(prefs(context).getString("gpsQuality", "").orEmpty())
+        }.getOrNull()
         fun getLastAccuracyMeters(context: Context): Double = runCatching {
             if (!isFreshFix(SystemClock.elapsedRealtimeNanos(), prefs(context).getLong(KEY_FIX_ELAPSED,0))) return -1.0
             prefs(context).getString(KEY_LAST_ACCURACY, null)?.toDouble() ?: -1.0
@@ -347,5 +364,6 @@ class LocationTrackingService : Service() {
         inline fun <reified T> decodeFromString(value: String): T = json.decodeFromString(value)
     }
 }
+
 
 

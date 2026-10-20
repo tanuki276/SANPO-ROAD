@@ -28,8 +28,8 @@ fun ShareScreen(route: SavedRoute,onClose: () -> Unit,onChanged: () -> Unit) {
     } }
     AlertDialog(onDismissRequest={if(!busy)onClose()}, title={Text("散歩を共有")},text={
         LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)) {
-            item { Text(route.name);Text("リンクを知っている人が閲覧できます。写真は公開されません。") }
-            item { Row { Checkbox(map,{map=it});Text("地図を含める") };Row {Checkbox(note,{note=it});Text("メモを含める") } }
+            item { Text(route.name);Text("リンクを知っている人が閲覧できます。写真は公開されません。短い散歩は地図が全て隠れる場合があります。既存リンクは作り直してください。") }
+            item { Row { Checkbox(map,{map=it});Text("地図を含める（始終点の半径150mを隠す）") };Row {Checkbox(note,{note=it});Text("メモを含める") } }
             item { Text("有効期限");Row { listOf(1,7,30,null).forEach { value -> TextButton(onClick={days=value}) { Text((if(days==value) "選択：" else "")+(value?.let { "${it}日" } ?: "無期限")) } } } }
             item { Button(enabled=!busy,onClick={action {
                 val url=ShareManager(context).create(route,map,note,days)
@@ -48,3 +48,4 @@ fun ShareScreen(route: SavedRoute,onClose: () -> Unit,onChanged: () -> Unit) {
         }
     },confirmButton={TextButton(enabled=!busy,onClick=onClose){Text("閉じる")}})
 }
+

@@ -36,6 +36,12 @@ data class SavedRoute(
     val syncedPhotoHash: String? = null,
     val sourceRouteId: Long? = null,
     val restDurationMs: Long = 0L,
-    val formatVersion: Int = 2
+    val formatVersion: Int = 2,
+    val tags: List<String> = emptyList(),
+    val imported: Boolean = false,
+    val importKey: String? = null,
+    val gpsQuality: GpsQualityReport? = null,
+    val restIntervals: List<RestInterval> = emptyList()
 )
+
 

@@ -12,7 +12,7 @@ fun filterWalkHistory(routes: List<SavedRoute>, query: String, sort: HistorySort
         route.startedAt >= filter.since && route.distanceMeters >= filter.minimumMeters &&
             (!filter.photosOnly || route.photoPath != null || route.photoObjectPath != null) &&
             (!filter.favoritesOnly || route.favorite) && route.deletedAt == null && words.all { word ->
-            route.name.contains(word, ignoreCase = true) || route.note.contains(word, ignoreCase = true)
+            route.name.contains(word, ignoreCase = true) || route.note.contains(word, ignoreCase = true) || route.tags.any { it.contains(word, ignoreCase = true) }
         }
     }
     val comparator = when (sort) {
@@ -22,4 +22,5 @@ fun filterWalkHistory(routes: List<SavedRoute>, query: String, sort: HistorySort
     }.thenByDescending { it.id }
     return matching.sortedWith(comparator)
 }
+
 

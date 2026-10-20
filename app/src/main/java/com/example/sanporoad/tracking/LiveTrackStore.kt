@@ -31,11 +31,19 @@ object LiveTrackStore {
         cached = db.points().forWalk(key).map { LatLngPoint(it.lat,it.lng,it.timeMs,it.accuracyM,it.segment) }
         error = null
     }
-    @Synchronized fun append(context: Context, points: List<LatLngPoint>) {
+    internal fun accumulator(context: Context): GpsDistanceAccumulator? = runCatching {
+        Json.decodeFromString<GpsDistanceAccumulator>(AppDatabase.get(context).walks().find(key(context))!!.metadata)
+    }.getOrNull()
+    @Synchronized internal fun append(context: Context, points: List<LatLngPoint>, accumulator: GpsDistanceAccumulator) {
         try {
             val offset = cached.size
-            AppDatabase.get(context).points().insert(points.mapIndexed { i,p ->
-                TrackPointEntity(key(context),offset+i,p.lat,p.lng,p.timeMs,p.accuracyM,p.segment) })
+            val db = AppDatabase.get(context)
+            db.runInTransaction {
+                db.points().insert(points.mapIndexed { i,p ->
+                    TrackPointEntity(key(context),offset+i,p.lat,p.lng,p.timeMs,p.accuracyM,p.segment) })
+                val row = checkNotNull(db.walks().find(key(context)))
+                db.walks().put(row.copy(metadata=Json.encodeToString(GpsDistanceAccumulator.serializer(),accumulator)))
+            }
             cached = cached + points; error = null
         } catch(e: Exception) { error = "GPS記録の保存に失敗しました。空き容量を確認してください。"; throw e }
     }
@@ -43,3 +51,4 @@ object LiveTrackStore {
         AppDatabase.get(context).walks().delete(key(context)); cached = emptyList(); error = null
     }
 }
+

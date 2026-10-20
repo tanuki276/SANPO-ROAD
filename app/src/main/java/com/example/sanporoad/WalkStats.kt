@@ -23,7 +23,8 @@ data class WalkStatsSnapshot(
 }
 
 object WalkStats {
-    fun calculate(routes: List<SavedRoute>, zone: ZoneId = ZoneId.systemDefault()): WalkStatsSnapshot {
+    fun calculate(records: List<SavedRoute>, zone: ZoneId = ZoneId.systemDefault()): WalkStatsSnapshot {
+        val routes = records.filter { !it.imported && it.deletedAt == null }
         if (routes.isEmpty()) {
             return WalkStatsSnapshot(0.0, 0L, 0, 0, 0.0, 0, 0.0, 0.0, 0L, 0.0, 0L)
         }
@@ -77,4 +78,5 @@ object WalkStats {
         return max(streak, 0)
     }
 }
+
 

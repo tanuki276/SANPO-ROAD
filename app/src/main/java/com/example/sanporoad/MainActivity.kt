@@ -224,6 +224,8 @@ fun SanpoRoadApp() {
                             onClearRestoredRoute = { selectedRoute = null },
                             onSave = { route ->
                                 withContext(Dispatchers.IO) { store.save(route) }
+                                // Optional integration cannot fail or roll back the local save.
+                                scope.launch { HealthConnectManager(context).writeAfterSave(route) }
                                 guideRoute = null
                                 lastSavedRoute = route
                                 selectedRoute = route
@@ -263,4 +265,5 @@ fun SanpoRoadApp() {
         )
     }
 }
+
 

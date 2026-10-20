@@ -54,6 +54,7 @@ android {
 kapt { arguments { arg("room.schemaLocation", "$projectDir/schemas") } }
 
 dependencies {
+    implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("androidx.room:room-runtime:2.6.1")
     kapt("androidx.room:room-compiler:2.6.1")
     androidTestImplementation("androidx.room:room-testing:2.6.1")
@@ -83,5 +84,6 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling:1.7.8")
 }
+
 
 

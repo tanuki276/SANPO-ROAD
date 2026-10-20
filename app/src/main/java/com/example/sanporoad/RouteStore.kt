@@ -23,12 +23,23 @@ class RouteStore(private val context: Context) {
 
     @Synchronized
     fun save(route: SavedRoute) {
-        val owned = route.copy(ownerId = route.ownerId ?: settings.activeAccountId,
+        val previous = repository.all().find { it.id == route.id && it.ownerId == route.ownerId }
+        val owned = route.copy(imported = route.imported || previous?.imported == true, ownerId = route.ownerId ?: settings.activeAccountId,
             updatedAt = maxOf(System.currentTimeMillis(), route.updatedAt + 1), syncState = "PENDING",
             photoHash = PhotoStore.hash(route.photoPath))
         check(route.ownerId == null || route.ownerId == settings.activeAccountId)
         repository.ensureMigrated()
         repository.put(owned)
+    }
+
+    @Synchronized
+    fun saveImported(routes: List<SavedRoute>) {
+        repository.ensureMigrated()
+        val all=readAll()
+        val imports=routes.map { it.copy(imported=true,ownerId=settings.activeAccountId,
+            updatedAt=System.currentTimeMillis(),syncState="PENDING",photoHash=PhotoStore.hash(it.photoPath)) }
+        require(imports.none { imported -> all.any { it.id==imported.id && it.ownerId==imported.ownerId } })
+        repository.replaceAll(all+imports)
     }
 
     @Synchronized
@@ -141,4 +152,5 @@ class RouteStore(private val context: Context) {
 }
 
 data class SyncResult(val uploaded: Int, val failedUploads: Int, val downloaded: Int, val cloudAvailable: Boolean)
+
 

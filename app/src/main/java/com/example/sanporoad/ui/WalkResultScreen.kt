@@ -73,8 +73,8 @@ internal fun WalkResultDialog(
     previousRoutes: List<SavedRoute>,
     onClose: () -> Unit
 ) {
-    val previousLongest = previousRoutes.maxOfOrNull { it.distanceMeters } ?: 0.0
-    val isDistanceBest = route.distanceMeters > previousLongest && previousLongest > 0.0
+    val previousLongest = previousRoutes.filter { !it.imported }.maxOfOrNull { it.distanceMeters } ?: 0.0
+    val isDistanceBest = !route.imported && route.distanceMeters > previousLongest && previousLongest > 0.0
     val comparison = remember(route.id, previousRoutes.size) {
         WalkInsights.compareWithPreviousSimilar(route, previousRoutes)
     }
@@ -87,6 +87,11 @@ internal fun WalkResultDialog(
                 RoutePhoto(route, Modifier.fillMaxWidth().height(150.dp))
                 Text(route.name, style = MaterialTheme.typography.titleMedium)
                 Text("${formatKm(route.distanceMeters)} ・ ${formatDuration(route.durationMs)}")
+                Text(timeSummary(route.durationMs, route.restDurationMs))
+                Text(route.tags.joinToString(" / "))
+                if (route.imported) Text("インポート記録・自己記録の対象外")
+                GpsQualityView(route.gpsQuality)
+                HealthRoutePanel(route)
                 Text("平均ペース ${paceText(route.distanceMeters, route.durationMs)}")
                 comparison?.let {
                     HorizontalDivider()
@@ -196,5 +201,6 @@ fun StatBox(label: String, value: String, modifier: Modifier = Modifier) {
         }
     }
 }
+
 
 

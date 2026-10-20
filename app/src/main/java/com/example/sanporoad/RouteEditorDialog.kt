@@ -22,6 +22,7 @@ fun RouteEditorDialog(route: SavedRoute, onClose: () -> Unit, onSave: suspend (S
     val scope = rememberCoroutineScope()
     var name by rememberSaveable(route.id) { mutableStateOf(route.name) }
     var note by rememberSaveable(route.id) { mutableStateOf(route.note) }
+    var tags by rememberSaveable(route.id) { mutableStateOf(route.tags.joinToString("、")) }
     var favorite by rememberSaveable(route.id) { mutableStateOf(route.favorite) }
     var photo by rememberSaveable(route.id) { mutableStateOf<String?>(null) }
     var removePhoto by rememberSaveable(route.id) { mutableStateOf(route.photoRemoved) }
@@ -42,6 +43,7 @@ fun RouteEditorDialog(route: SavedRoute, onClose: () -> Unit, onSave: suspend (S
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             OutlinedTextField(name, { name = it.take(80) }, label = { Text("名前") }, enabled = !busy)
             OutlinedTextField(note, { note = it.take(1000) }, label = { Text("メモ") }, enabled = !busy)
+            TagEditor(tags, { tags = it }, !busy)
             Row { Checkbox(favorite, { favorite = it }, enabled = !busy); Text("お気に入り") }
             OutlinedButton(onClick = { picker.launch("image/*") }, enabled = !busy) { Text(if (photo == null) "写真を変更" else "写真を選択済み") }
             TextButton(onClick = { removePhoto = true; photo = null }, enabled = !busy) { Text(if (removePhoto) "保存時に写真を削除します" else "写真を外す") }
@@ -53,7 +55,7 @@ fun RouteEditorDialog(route: SavedRoute, onClose: () -> Unit, onSave: suspend (S
             if (removePhoto) null else photo?.let { PhotoStore.copyIntoAppStorage(context, android.net.Uri.parse(it), java.util.UUID.randomUUID().mostSignificantBits.and(Long.MAX_VALUE))
                 ?: error("photo") } ?: route.photoPath
         }
-        onSave(route.copy(name = name.trim(), note = note.trim(), favorite = favorite, photoPath = photoPath,
+        onSave(route.copy(name = name.trim(), note = note.trim(), tags = parseWalkTags(tags), favorite = favorite, photoPath = photoPath,
             photoRemoved = removePhoto, photoObjectPath = route.photoObjectPath))
         if (removePhoto || (photoPath != route.photoPath && photo != null)) PhotoStore.localFile(route.photoPath)?.delete()
     } }) { Text(if (busy) "処理中…" else "保存") } }, dismissButton = { TextButton(onClick = onClose, enabled = !busy) { Text("戻る") } })
@@ -62,4 +64,5 @@ fun RouteEditorDialog(route: SavedRoute, onClose: () -> Unit, onSave: suspend (S
         confirmButton = { TextButton(onClick = { confirmDelete = false; action { onDelete() } }) { Text("削除する") } },
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("キャンセル") } })
 }
+
 

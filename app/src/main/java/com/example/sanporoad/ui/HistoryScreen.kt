@@ -132,7 +132,9 @@ fun WalkHistoryScreen(routes: List<SavedRoute>, onStartWalk: () -> Unit, onEdit:
                         Text(SimpleDateFormat("yyyy年M月d日（E） HH:mm", Locale.JAPAN).format(Date(route.startedAt)), style = MaterialTheme.typography.labelMedium)
                         Text(route.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         RoutePhoto(route, Modifier.fillMaxWidth().height(140.dp))
-                        Text("${formatKm(route.distanceMeters)} ・ ${formatDuration(route.durationMs)} ・ ${paceText(route.distanceMeters, route.durationMs)}")
+                        Text("${formatKm(route.distanceMeters)} / ${timeSummary(route.durationMs, route.restDurationMs)}")
+                        if (route.tags.isNotEmpty()) Text(route.tags.joinToString(" / "))
+                        if (route.imported) Text("インポート記録・自己記録対象外")
                         if (route.sourceRouteId != null) Text("再走元 #${route.sourceRouteId}", style = MaterialTheme.typography.labelSmall)
                         Row(Modifier.horizontalScroll(rememberScrollState())) {
                             TextButton(onClick = { onRepeat(route) }) { Icon(Icons.Default.DirectionsWalk,null,Modifier.size(20.dp)); Text("もう一度歩く") }
@@ -153,4 +155,5 @@ fun WalkHistoryScreen(routes: List<SavedRoute>, onStartWalk: () -> Unit, onEdit:
         }
     }
 }
+
 

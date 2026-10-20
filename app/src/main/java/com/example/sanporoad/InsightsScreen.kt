@@ -62,6 +62,12 @@ fun WalkInsightsScreen(
         }
         item { WeeklyChart(weeks) }
         item {
+            Text("月別タグ集計（インポート記録を除く）")
+            routes.filter { !it.imported && it.deletedAt == null && java.time.YearMonth.from(java.time.Instant.ofEpochMilli(it.startedAt).atZone(java.time.ZoneId.systemDefault())) == month }
+                .flatMap { route -> route.tags.distinct().map { it to route.distanceMeters } }
+                .groupBy({it.first},{it.second}).toSortedMap().forEach { (tag, meters) -> Text("$tag ${fmtKm(meters.sum())}") }
+        }
+        item {
             MonthCalendar(
                 month = month,
                 days = days,
@@ -271,4 +277,5 @@ private fun fmtDuration(ms: Long): String {
     val totalMinutes = ms.coerceAtLeast(0L) / 60_000L
     return if (totalMinutes >= 60) "${totalMinutes / 60}時間${totalMinutes % 60}分" else "${totalMinutes}分"
 }
+
 

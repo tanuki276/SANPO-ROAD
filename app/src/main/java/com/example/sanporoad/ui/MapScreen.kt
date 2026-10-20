@@ -121,6 +121,8 @@ fun MapRecordScreen(
 
     var startedAt by remember { mutableLongStateOf(LocationTrackingService.getStartedAt(context)) }
     var distance by remember { mutableDoubleStateOf(LocationTrackingService.getDistanceMeters(context)) }
+    var restMs by remember { mutableLongStateOf(0L) }
+    var tags by rememberSaveable { mutableStateOf("") }
     var durationMs by remember { mutableLongStateOf(LocationTrackingService.getDurationMs(context)) }
     var gpsAccuracy by remember { mutableDoubleStateOf(LocationTrackingService.getLastAccuracyMeters(context)) }
     var showSaveDialog by remember { mutableStateOf(LocationTrackingService.hasPendingRecording(context)) }
@@ -229,6 +231,7 @@ fun MapRecordScreen(
             startedAt = LocationTrackingService.getStartedAt(context)
             distance = LocationTrackingService.getDistanceMeters(context)
             durationMs = LocationTrackingService.getDurationMs(context)
+            restMs = LocationTrackingService.getRestDurationMs(context)
             permissionGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
             gpsMode = GpsSettings(context).mode
             val fix = liveFix?.takeIf { isFreshFix(SystemClock.elapsedRealtimeNanos(), it.elapsedRealtimeNanos) }
@@ -367,11 +370,17 @@ fun MapRecordScreen(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 StatBox("距離", formatKm(shownDistance), Modifier.weight(1f))
-                StatBox("時間", formatDuration(shownDuration), Modifier.weight(1f))
+                StatBox("移動", formatDuration(shownDuration), Modifier.weight(1f))
                 StatBox("ペース", pace, Modifier.weight(1f))
             }
         }
 
+        Text(timeSummary(if (showingRecordedSession) durationMs else restoredRoute?.durationMs ?: 0,
+            if (showingRecordedSession) restMs else restoredRoute?.restDurationMs ?: 0), Modifier.padding(horizontal=16.dp))
+        if (!showingRecordedSession) restoredRoute?.let { saved ->
+            GpsQualityView(saved.gpsQuality)
+            HealthRoutePanel(saved)
+        }
         Row(
             Modifier.fillMaxWidth().padding(16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -408,7 +417,9 @@ fun MapRecordScreen(
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (points.isEmpty()) Text("位置情報を取得できなかったため保存できません。屋外など空の開けた場所でお試しください。")
                 saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                Text("${formatKm(distance)} ・ ${formatDuration(durationMs)} ・ ${paceText(distance, durationMs)}")
+                Text("${formatKm(distance)} / ${timeSummary(durationMs, restMs)}")
+                TagEditor(tags, { tags = it }, !saving)
+                GpsQualityView(LocationTrackingService.getGpsQuality(context))
                 OutlinedTextField(
                     value = routeName,
                     onValueChange = { routeName = it.take(80) },
@@ -465,7 +476,10 @@ fun MapRecordScreen(
                             note = note.trim(),
                             photoPath = photoPath,
                             sourceRouteId = LocationTrackingService.getSourceRouteId(context),
-                            restDurationMs = LocationTrackingService.getRestDurationMs(context)
+                            restDurationMs = LocationTrackingService.getRestDurationMs(context),
+                            tags = parseWalkTags(tags),
+                            gpsQuality = LocationTrackingService.getGpsQuality(context),
+                            restIntervals = LocationTrackingService.getRestIntervals(context)
                         ))
                         withContext(Dispatchers.IO) { LocationTrackingService.clearPending(context) }
                         points = emptyList()
@@ -528,3 +542,4 @@ fun MapRecordScreen(
     }
 
 }
+
