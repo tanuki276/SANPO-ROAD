@@ -47,9 +47,14 @@ class StorageMigrationTest {
             db.execSQL("INSERT INTO track_points VALUES ('a',0,35,139,10,5,0)")
             db.version=1
         }
-        Room.databaseBuilder(context,AppDatabase::class.java,name).addMigrations(AppDatabase.MIGRATION_1_2).build().use { db ->
+        val db = Room.databaseBuilder(context,AppDatabase::class.java,name)
+            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .build()
+        try {
             assertEquals(35.0,db.points().forWalk("a").single().lat,0.0)
             assertEquals(2,db.openHelper.writableDatabase.version)
+        } finally {
+            db.close()
         }
         context.deleteDatabase(name)
     }
