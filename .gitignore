@@ -6,3 +6,4 @@ local.properties
 .env
 supabase/.temp/
 node_modules/
+

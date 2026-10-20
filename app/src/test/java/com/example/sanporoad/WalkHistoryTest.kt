@@ -37,3 +37,4 @@ class WalkHistoryTest {
         assertEquals(listOf(park, river, hill), routes)
     }
 }
+

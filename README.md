@@ -35,3 +35,4 @@ gradle --no-daemon testDebugUnitTest assembleDebug
 APK: `app/build/outputs/apk/debug/app-debug.apk`
 
 GitHub Actions は PR と main への push 時に単体テストと APK ビルドを実行します。実機で確認する手順は [docs/QA.md](docs/QA.md) を参照してください。
+

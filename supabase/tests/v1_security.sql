@@ -37,3 +37,4 @@ do $$ begin
  if public.sanpo_session_active_v1() then raise exception 'revoked session accepted'; end if;
 end $$;
 reset role;
+

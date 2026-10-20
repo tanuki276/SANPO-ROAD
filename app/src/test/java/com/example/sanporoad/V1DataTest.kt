@@ -63,3 +63,4 @@ class V1DataTest {
         assertEquals(listOf(match), filterWalkHistory(listOf(route(), match), "川", HistorySort.NEWEST, filter))
     }
 }
+

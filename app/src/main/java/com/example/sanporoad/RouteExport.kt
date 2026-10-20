@@ -43,3 +43,4 @@ object RouteExport {
         .encodeToString(ListSerializer(SavedRoute.serializer()), routes.filter { it.deletedAt == null }
             .map { it.copy(ownerId = null, photoPath = null, photoObjectPath = null) })
 }
+

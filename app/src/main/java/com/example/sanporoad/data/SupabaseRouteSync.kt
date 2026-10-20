@@ -11,6 +11,7 @@ import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.storage.Storage
 import io.github.jan.supabase.storage.storage
+import io.github.jan.supabase.storage.upload
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -90,10 +91,10 @@ object SupabaseRouteSync {
         if (route.deletedAt != null || route.photoRemoved) {
             client.storage[PHOTO_BUCKET].delete(listOf("$user/${route.id}.jpg", "$user/${route.id}.png", "$user/${route.id}.webp") + listOfNotNull(photo))
             photo = null
-        } else if (syncPhotos) {
+        } else if (syncPhotos && (photo == null || route.photoHash != route.syncedPhotoHash)) {
             PhotoStore.localFile(route.photoPath)?.let { local ->
                 photo = "$user/${route.id}.${local.extension.ifBlank { "jpg" }}"
-                client.storage[PHOTO_BUCKET].upload(photo!!, local.readBytes()) { upsert = true }
+                client.storage[PHOTO_BUCKET].upload(photo!!, local) { upsert = true }
             }
         }
         val payload = RemoteRoute.from(route, user, photo)
@@ -124,7 +125,7 @@ object SupabaseRouteSync {
         client.storage[PHOTO_BUCKET].createSignedUrl(objectPath, 5.minutes)
     }.getOrNull()
 
-    suspend fun createShareLink(route: SavedRoute, shareMap: Boolean = false): Result<String> = result {
+    suspend fun createShareLink(route: SavedRoute, shareMap: Boolean = false, shareNote: Boolean = false, expiryDays: Int? = 7): Result<String> = result {
         val user = prepareAccount()
         check(route.ownerId == null || route.ownerId == user)
         val parameters = buildJsonObject {
@@ -134,10 +135,11 @@ object SupabaseRouteSync {
             put("p_duration_ms", route.durationMs)
             put("p_distance_meters", route.distanceMeters)
             put("p_points", json.encodeToJsonElement(ListSerializer(LatLngPoint.serializer()), if (shareMap) route.points else emptyList()))
-            put("p_note", route.note)
+            put("p_note", if (shareNote) route.note else "")
+            put("p_expires_at", expiryDays?.let { Instant.now().plusSeconds(it.toLong()*86400).toString() }?.let(::JsonPrimitive) ?: JsonNull)
             put("p_share_map", shareMap)
         }
-        val token = client.postgrest.rpc("create_sanpo_share_v1", parameters).decodeAs<String>()
+        val token = client.postgrest.rpc("create_sanpo_share_v2", parameters).decodeAs<String>()
         shareUrl(token)
     }
     fun shareUrl(token: String) = BuildConfig.SHARE_API_URL.removeSuffix("/api/share") + "/s/$token"
@@ -187,7 +189,9 @@ object SupabaseRouteSync {
 data class ManagedShare(
     val token: String, val name: String,
     @SerialName("show_map") val showMap: Boolean,
-    @SerialName("created_at") val createdAt: String
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("route_local_id") val routeLocalId: Long? = null,
+    @SerialName("expires_at") val expiresAt: String? = null
 )
 
 @Serializable
@@ -205,10 +209,11 @@ private data class RemoteRoute(
     val favorite: Boolean = false
 ) {
     fun toLocal() = SavedRoute(localId, name, Instant.parse(startedAt).toEpochMilli(), durationMs,
-        distanceMeters, points, note, null, photoObjectPath, userId, updatedAt, deletedAt, favorite)
+        distanceMeters, points, note, null, photoObjectPath, userId, updatedAt, deletedAt, favorite, syncState = "SYNCED")
     companion object {
         fun from(route: SavedRoute, user: String, photo: String?) = RemoteRoute(user, route.id,
             route.name, Instant.ofEpochMilli(route.startedAt).toString(), route.durationMs,
             route.distanceMeters, route.points, route.note, photo, route.updatedAt, route.deletedAt, route.favorite)
     }
 }
+

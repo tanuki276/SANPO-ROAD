@@ -8,7 +8,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
 class RouteStore(private val context: Context) {
-    private val prefs = context.getSharedPreferences("sanpo_routes", Context.MODE_PRIVATE)
+    private val repository = RouteRepository(context)
     private val settings = WalkPreferences(context)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val serializer = ListSerializer(SavedRoute.serializer())
@@ -24,15 +24,17 @@ class RouteStore(private val context: Context) {
     @Synchronized
     fun save(route: SavedRoute) {
         val owned = route.copy(ownerId = route.ownerId ?: settings.activeAccountId,
-            updatedAt = maxOf(System.currentTimeMillis(), route.updatedAt + 1))
+            updatedAt = maxOf(System.currentTimeMillis(), route.updatedAt + 1), syncState = "PENDING",
+            photoHash = PhotoStore.hash(route.photoPath))
         check(route.ownerId == null || route.ownerId == settings.activeAccountId)
-        writeAll(readAll().filterNot { it.id == route.id && (it.ownerId == route.ownerId || it.ownerId == owned.ownerId) } + owned)
+        repository.ensureMigrated()
+        repository.put(owned)
     }
 
     @Synchronized
     private fun upsert(route: SavedRoute) {
-        val all = readAll().filterNot { it.id == route.id && it.ownerId == route.ownerId } + route
-        writeAll(all)
+        repository.ensureMigrated()
+        repository.put(route)
     }
 
     @Synchronized
@@ -49,7 +51,7 @@ class RouteStore(private val context: Context) {
         val stamp = maxOf(System.currentTimeMillis(), route.updatedAt + 1)
         // Persist deletion before removing any photo. Keep a tombstone for offline retries.
         upsert(route.copy(deletedAt = stamp, updatedAt = stamp, name = "削除済み", note = "",
-            points = emptyList(), distanceMeters = 0.0, durationMs = 0, photoPath = null))
+            points = emptyList(), distanceMeters = 0.0, durationMs = 0, photoPath = null, syncState = "PENDING"))
         PhotoStore.localFile(route.photoPath)?.delete()
     }
 
@@ -106,14 +108,16 @@ class RouteStore(private val context: Context) {
         adoptGuestRecords(account, remote)
         merge(remote) // Restore BEFORE upload: reinstall must never replace the server with stale data.
         var failed = 0
-        val local = visible().filter { it.ownerId == account }
+        val local = visible().filter { it.ownerId == account && (it.syncState != "SYNCED" ||
+            (settings.photoSync && it.deletedAt == null && it.photoHash != it.syncedPhotoHash)) }
         local.forEach { route ->
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             check(settings.cloudSync && settings.activeAccountId == account)
             SupabaseRouteSync.push(route, settings.photoSync).onSuccess { path ->
                 synchronized(this) {
                     val current = readAll().find { it.ownerId == account && it.id == route.id }
-                    if (current?.updatedAt == route.updatedAt) upsert(current.copy(photoObjectPath = path))
+                    if (current?.updatedAt == route.updatedAt) upsert(current.copy(photoObjectPath = path, syncState = "SYNCED",
+                        syncedPhotoHash = if (settings.photoSync) route.photoHash else current.syncedPhotoHash))
                 }
             }.onFailure { failed++ }
         }
@@ -123,20 +127,16 @@ class RouteStore(private val context: Context) {
     suspend fun flushDeletes() = operations.withLock {
         val account = SupabaseRouteSync.prepareAccount()
         check(account == settings.activeAccountId)
+        check(settings.cloudSync) { "クラウド同期はOFFです" }
         visible().filter { it.ownerId == account && it.deletedAt != null }.forEach {
             SupabaseRouteSync.push(it, false).getOrThrow()
         }
     }
 
-    private fun readAll(): List<SavedRoute> {
-        val raw = prefs.getString("routes", "[]") ?: "[]"
-        // Never silently replace a damaged store with an empty list.
-        return json.decodeFromString(serializer, raw)
-    }
-    private fun writeAll(routes: List<SavedRoute>) {
-        check(prefs.edit().putString("routes", json.encodeToString(serializer, routes)).commit()) { "端末に保存できませんでした" }
-    }
+    private fun readAll(): List<SavedRoute> = repository.all()
+    private fun writeAll(routes: List<SavedRoute>) = repository.replaceAll(routes)
     companion object { val operations = Mutex() }
 }
 
 data class SyncResult(val uploaded: Int, val failedUploads: Int, val downloaded: Int, val cloudAvailable: Boolean)
+

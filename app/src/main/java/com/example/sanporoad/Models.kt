@@ -30,5 +30,12 @@ data class SavedRoute(
     val updatedAt: Long = 0L,
     val deletedAt: Long? = null,
     val favorite: Boolean = false,
-    val photoRemoved: Boolean = false
+    val photoRemoved: Boolean = false,
+    val syncState: String = "PENDING",
+    val photoHash: String? = null,
+    val syncedPhotoHash: String? = null,
+    val sourceRouteId: Long? = null,
+    val restDurationMs: Long = 0L,
+    val formatVersion: Int = 2
 )
+

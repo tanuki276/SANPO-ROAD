@@ -38,3 +38,4 @@ Deno.serve(async (request: Request) => {
     return reply(503, "delete_failed_retry_after_login");
   }
 });
+

@@ -116,3 +116,4 @@ using (bucket_id <> 'walk-photos' or public.sanpo_session_active_v1())
 with check (bucket_id <> 'walk-photos' or (public.sanpo_session_active_v1() and not exists(
  select 1 from public.sanpo_routes r where r.user_id=auth.uid() and r.local_id::text=split_part(split_part(name,'/',2),'.',1) and r.deleted_at is not null
 )));
+

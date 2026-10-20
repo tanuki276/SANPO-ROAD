@@ -1,15 +1,17 @@
+const noStore = { 'cache-control': 'no-store, max-age=0', 'cdn-cache-control': 'no-store', 'vercel-cdn-cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow, noarchive' }
+const reply = (body, options = {}) => Response.json(body, { ...options, headers: { ...options.headers, ...noStore } })
 export async function GET(request) {
   const url = new URL(request.url)
   const token = (url.searchParams.get('token') || '').trim()
   if (!/^[a-f0-9]{32}$/i.test(token)) {
-    return Response.json({ error: 'not_found' }, { status: 404 })
+    return reply({ error: 'not_found' }, { status: 404 })
   }
 
   const supabaseUrl = process.env.SUPABASE_URL
   const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY
   if (!supabaseUrl || !publishableKey) {
     console.error('Missing Supabase share environment variables')
-    return Response.json({ error: 'server_config' }, { status: 500 })
+    return reply({ error: 'server_config' }, { status: 500 })
   }
 
   try {
@@ -25,13 +27,13 @@ export async function GET(request) {
 
     if (!response.ok) {
       console.error('Supabase share lookup failed', response.status)
-      return Response.json({ error: 'upstream' }, { status: 502 })
+      return reply({ error: 'upstream' }, { status: 502 })
     }
 
     const data = await response.json()
-    if (!data) return Response.json({ error: 'not_found' }, { status: 404 })
+    if (!data) return reply({ error: 'not_found' }, { status: 404 })
 
-    return Response.json({
+    return reply({
       name: data.name,
       startedAt: data.started_at,
       durationMs: data.duration_ms,
@@ -47,6 +49,7 @@ export async function GET(request) {
     })
   } catch (error) {
     console.error('Share lookup error', error)
-    return Response.json({ error: 'server_error' }, { status: 500 })
+    return reply({ error: 'server_error' }, { status: 500 })
   }
 }
+

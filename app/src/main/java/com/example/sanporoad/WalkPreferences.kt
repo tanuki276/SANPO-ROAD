@@ -32,3 +32,4 @@ class WalkPreferences(context: Context) {
         private const val KEY_WEEKLY_GOAL = "weeklyGoalMeters"
     }
 }
+

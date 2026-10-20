@@ -7,7 +7,8 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.location.Location
+import android.os.SystemClock
+import kotlinx.coroutines.*
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -23,20 +24,37 @@ import kotlin.math.*
 class LocationTrackingService : Service() {
     private val fused by lazy { LocationServices.getFusedLocationProviderClient(this) }
 
+    private val worker = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
-            if (!isRecording(this@LocationTrackingService) || isPaused(this@LocationTrackingService)) return
-            val loc = result.lastLocation ?: return
-            val now = System.currentTimeMillis()
-            val accuracy = if (loc.hasAccuracy()) loc.accuracy else Float.MAX_VALUE
-            put(this@LocationTrackingService, KEY_LAST_ACCURACY, accuracy.toDouble())
-
-            if (now - loc.time > MAX_LOCATION_AGE_MS) return
-            if (!loc.hasAccuracy() || accuracy > MAX_ACCEPTED_ACCURACY_M) return
-            if (loc.hasSpeed() && loc.speed > MAX_REPORTED_SPEED_MPS) return
-
-            addFilteredLocation(loc, now)
-            updateNotification()
+            worker.launch {
+                if (!isRecording(this@LocationTrackingService) || isPaused(this@LocationTrackingService)) return@launch
+                try {
+                    val accepted = mutableListOf<LatLngPoint>()
+                    var previous = getPoints(this@LocationTrackingService).lastOrNull()
+                    var distance = getDistanceMeters(this@LocationTrackingService)
+                    val now = SystemClock.elapsedRealtimeNanos()
+                    for (loc in result.locations.sortedBy { it.elapsedRealtimeNanos }) {
+                        if (!isFreshFix(now, loc.elapsedRealtimeNanos) || loc.time < getStartedAt(this@LocationTrackingService)) continue
+                        if (loc.time < prefs(this@LocationTrackingService).getLong(KEY_RESUMED_AT, 0)) continue
+                        val accuracy = if (loc.hasAccuracy()) loc.accuracy else Float.NaN
+                        if (accuracy.isFinite() && accuracy > 0) {
+                            put(this@LocationTrackingService, KEY_LAST_ACCURACY, accuracy.toDouble())
+                            put(this@LocationTrackingService, KEY_FIX_ELAPSED, loc.elapsedRealtimeNanos)
+                        }
+                        val candidate = LatLngPoint(loc.latitude,loc.longitude,loc.time,accuracy,
+                            prefs(this@LocationTrackingService).getLong(KEY_SEGMENT,0).toInt())
+                        val delta = GpsTrackFilter.segmentMeters(previous,candidate,
+                            if(loc.hasSpeed()) loc.speed else null, GpsSettings(this@LocationTrackingService).mode.filter) ?: continue
+                        accepted += candidate; previous = candidate; distance += delta
+                    }
+                    if (accepted.isNotEmpty()) {
+                        LiveTrackStore.append(this@LocationTrackingService, accepted)
+                        put(this@LocationTrackingService,KEY_DISTANCE,distance)
+                    }
+                    updateNotification()
+                } catch (_: Exception) { pauseTracking(); updateNotification() }
+            }
         }
     }
 
@@ -46,14 +64,21 @@ class LocationTrackingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> stopTracking()
-            ACTION_PAUSE -> pauseTracking()
-            ACTION_RESUME -> resumeTracking()
-            ACTION_START -> startTracking()
-            null -> if (isRecording(this)) startTracking() else stopSelf()
+        // Enter foreground immediately; disk work is serialized away from the UI thread.
+        if (intent?.action == ACTION_START || isRecording(this)) startForeground(NOTIFICATION_ID, buildNotification())
+        worker.launch {
+            try {
+                when (intent?.action) {
+                    ACTION_STOP -> stopTracking()
+                    ACTION_PAUSE -> pauseTracking()
+                    ACTION_RESUME -> resumeTracking()
+                    ACTION_MODE -> if (isRecording(this@LocationTrackingService)) startTracking()
+                    ACTION_START -> startTracking()
+                    null -> if (isRecording(this@LocationTrackingService)) startTracking() else stopSelf()
+                }
+            } catch (_: Exception) { pauseTracking(); updateNotification() }
         }
-        return if (isRecording(this)) START_STICKY else START_NOT_STICKY
+        return if (intent?.action == ACTION_START || isRecording(this)) START_STICKY else START_NOT_STICKY
     }
 
     private fun startTracking() {
@@ -78,14 +103,14 @@ class LocationTrackingService : Service() {
             put(this, KEY_LAST_ACCURACY, -1.0)
         }
 
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L)
-            .setMinUpdateIntervalMillis(1000L)
-            .setMaxUpdateDelayMillis(4000L)
-            .setWaitForAccurateLocation(true)
-            .build()
+        LiveTrackStore.load(this)
+        val request = GpsSettings(this).request()
         try {
             startForeground(NOTIFICATION_ID, buildNotification())
-            if (!isPaused(this)) fused.requestLocationUpdates(request, callback, mainLooper)
+            fused.removeLocationUpdates(callback).addOnCompleteListener {
+                if (isRecording(this) && !isPaused(this)) fused.requestLocationUpdates(request, callback, mainLooper)
+                    .addOnFailureListener { worker.launch { pauseTracking(); updateNotification() } }
+            }
         } catch (_: SecurityException) {
             put(this, KEY_STOPPED_AT, System.currentTimeMillis())
             put(this, KEY_RECORDING, false)
@@ -105,6 +130,7 @@ class LocationTrackingService : Service() {
     private fun resumeTracking() {
         if (!isRecording(this) || !isPaused(this)) return
         finishPause()
+        put(this, KEY_RESUMED_AT, System.currentTimeMillis())
         put(this, KEY_SEGMENT, prefs(this).getLong(KEY_SEGMENT, 0L) + 1L)
         put(this, KEY_LAST_ACCURACY, -1.0)
         startTracking()
@@ -137,57 +163,13 @@ class LocationTrackingService : Service() {
 
     override fun onDestroy() {
         fused.removeLocationUpdates(callback)
+        worker.cancel()
         super.onDestroy()
-    }
-
-    private fun addFilteredLocation(loc: Location, now: Long) {
-        val points = getPoints(this).toMutableList()
-        val candidate = LatLngPoint(loc.latitude, loc.longitude, now, loc.accuracy, prefs(this).getLong(KEY_SEGMENT, 0L).toInt())
-        val previous = points.lastOrNull()
-
-        if (previous == null || previous.segment != candidate.segment) {
-            // The very first fix is accepted only when reasonably accurate. This prevents the
-            // common startup "jump" from a coarse cached position to the real position.
-            if (loc.accuracy <= FIRST_FIX_MAX_ACCURACY_M) {
-                points += candidate
-                persistPoints(points, getDistanceMeters(this))
-            }
-            return
-        }
-
-        val dtSeconds = ((candidate.timeMs - previous.timeMs).coerceAtLeast(1L)) / 1000.0
-        val segment = haversine(
-            GeoPoint(previous.lat, previous.lng),
-            GeoPoint(candidate.lat, candidate.lng)
-        )
-        val previousAccuracy = previous.accuracyM?.toDouble() ?: loc.accuracy.toDouble()
-        val accuracyNoise = max(previousAccuracy, loc.accuracy.toDouble())
-
-        // GPS naturally wanders while standing still. Movement smaller than the expected noise
-        // radius is ignored completely instead of inflating the walk distance.
-        val minimumMovement = max(MIN_MOVEMENT_METERS, accuracyNoise * NOISE_RADIUS_FACTOR)
-        if (segment < minimumMovement) return
-
-        val calculatedSpeed = segment / dtSeconds
-        if (calculatedSpeed > MAX_CALCULATED_SPEED_MPS) return
-
-        // Reject sudden jumps that are much larger than both fixes' accuracy envelopes.
-        val plausibleJump = max(MAX_NORMAL_SEGMENT_METERS, (previousAccuracy + loc.accuracy) * JUMP_ACCURACY_FACTOR)
-        if (segment > plausibleJump) return
-
-        val newDistance = getDistanceMeters(this) + segment
-        points += candidate
-        persistPoints(points, newDistance)
-    }
-
-    private fun persistPoints(points: List<LatLngPoint>, distance: Double) {
-        put(this, KEY_POINTS, JsonConfig.encodeToString(ListSerializer(LatLngPoint.serializer()), points))
-        put(this, KEY_DISTANCE, distance)
     }
 
     private fun buildNotification(): Notification {
         val accuracy = getLastAccuracyMeters(this)
-        val suffix = if (accuracy > 0) " / GPS ±${accuracy.roundToInt()}m" else ""
+        val suffix = if (accuracy > 0) " / GPS ±${accuracy.roundToInt()}m" else " / 現在地取得中"
         val openApp = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
@@ -205,7 +187,7 @@ class LocationTrackingService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentTitle("サンポロード")
-            .setContentText(if (isPaused(this)) "$distance ・ 一時停止中" else "$distance ・ 散歩を記録中$suffix")
+            .setContentText(LiveTrackStore.error ?: if (isPaused(this)) "$distance ・ 一時停止中" else "$distance ・ 散歩を記録中$suffix")
             .setContentIntent(openApp)
             .setWhen(System.currentTimeMillis() - getDurationMs(this))
             .setUsesChronometer(!isPaused(this))
@@ -245,6 +227,9 @@ class LocationTrackingService : Service() {
         private const val KEY_STOPPED_AT = "stoppedAt"
         private const val KEY_POINTS = "points"
         private const val KEY_DISTANCE = "distance"
+        private const val KEY_RESUMED_AT = "resumedAt"
+        private const val KEY_FIX_ELAPSED = "fixElapsed"
+        private const val KEY_SOURCE = "sourceRouteId"
         private const val KEY_LAST_ACCURACY = "lastAccuracy"
 
         private const val MAX_LOCATION_AGE_MS = 8_000L
@@ -257,6 +242,7 @@ class LocationTrackingService : Service() {
         private const val MAX_NORMAL_SEGMENT_METERS = 45.0
         private const val JUMP_ACCURACY_FACTOR = 1.8
 
+        const val ACTION_MODE = "com.example.sanporoad.MODE"
         const val ACTION_START = "com.example.sanporoad.START"
         const val ACTION_STOP = "com.example.sanporoad.STOP"
         const val ACTION_PAUSE = "com.example.sanporoad.PAUSE"
@@ -267,8 +253,9 @@ class LocationTrackingService : Service() {
             context.startService(Intent(context, LocationTrackingService::class.java).setAction(if (isPaused(context)) ACTION_RESUME else ACTION_PAUSE))
         }
 
-        fun start(context: Context) {
+        fun start(context: Context, sourceRouteId: Long? = null) {
             if (isRecording(context) || hasPendingRecording(context)) return
+            put(context, KEY_SOURCE, sourceRouteId ?: 0L)
             val intent = Intent(context, LocationTrackingService::class.java).setAction(ACTION_START)
             androidx.core.content.ContextCompat.startForegroundService(context, intent)
         }
@@ -298,19 +285,24 @@ class LocationTrackingService : Service() {
                 ?: prefs(context).getFloat(KEY_DISTANCE, 0f).toDouble()
         }.getOrDefault(0.0)
 
+        fun getSourceRouteId(context: Context) = prefs(context).getLong(KEY_SOURCE, 0).takeIf { it > 0 }
+        fun getRestDurationMs(context: Context) = prefs(context).getLong(KEY_PAUSED_TOTAL, 0)
         fun getLastAccuracyMeters(context: Context): Double = runCatching {
+            if (!isFreshFix(SystemClock.elapsedRealtimeNanos(), prefs(context).getLong(KEY_FIX_ELAPSED,0))) return -1.0
             prefs(context).getString(KEY_LAST_ACCURACY, null)?.toDouble() ?: -1.0
         }.getOrDefault(-1.0)
 
-        fun getPoints(context: Context): List<LatLngPoint> = runCatching {
-            JsonConfig.decodeFromString<List<LatLngPoint>>(prefs(context).getString(KEY_POINTS, "[]") ?: "[]")
-        }.getOrDefault(emptyList())
+        fun getPoints(context: Context): List<LatLngPoint> = LiveTrackStore.points()
 
         fun clearPending(context: Context) {
+            LiveTrackStore.clear(context)
             prefs(context).edit()
                 .putBoolean(KEY_PENDING, false)
                 .putBoolean(KEY_RECORDING, false)
                 .remove(KEY_SESSION_ID)
+                .remove(KEY_SOURCE)
+                .remove(KEY_FIX_ELAPSED)
+                .remove(KEY_RESUMED_AT)
                 .remove(KEY_PAUSED_AT)
                 .remove(KEY_PAUSED_TOTAL)
                 .remove(KEY_SEGMENT)
@@ -350,4 +342,5 @@ class LocationTrackingService : Service() {
         inline fun <reified T> decodeFromString(value: String): T = json.decodeFromString(value)
     }
 }
+
 

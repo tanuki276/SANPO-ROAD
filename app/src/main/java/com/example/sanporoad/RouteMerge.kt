@@ -15,6 +15,9 @@ fun mergeRoute(local: SavedRoute?, remote: SavedRoute): SavedRoute {
         photoObjectPath = null, distanceMeters = 0.0, durationMs = 0L
     ) else winner.copy(
         photoPath = if (winner.photoRemoved) null else local.photoPath,
+        photoHash = local.photoHash, syncedPhotoHash = local.syncedPhotoHash,
+        sourceRouteId = winner.sourceRouteId ?: local.sourceRouteId,
         photoObjectPath = if (winner.photoRemoved) null else winner.photoObjectPath ?: remote.photoObjectPath
     )
 }
+

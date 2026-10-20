@@ -66,6 +66,16 @@ fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncS
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         }
         item {
+            SettingsCard("GPS設定") {
+                val gps = remember { GpsSettings(context) }
+                var high by remember { mutableStateOf(gps.mode == GpsMode.HIGH_ACCURACY) }
+                SettingSwitch("高精度GPSモード", "位置更新を多く要求します。電池消費が増えます。端末や環境によって精度は変わり、改善を保証するものではありません。散歩中も変更できます。", high, true) {
+                    try { gps.mode = if(it) GpsMode.HIGH_ACCURACY else GpsMode.NORMAL; high = it }
+                    catch (e: Exception) { message = e.message }
+                }
+            }
+        }
+        item {
             SettingsCard("保存と送信") {
                 Text(syncStatus)
                 SettingSwitch("クラウド同期", "ONにすると端末の記録をログイン中のアカウントへ保存・復元します。OFFでも既存のクラウドデータは残ります。", cloud, !busy && !recording) {

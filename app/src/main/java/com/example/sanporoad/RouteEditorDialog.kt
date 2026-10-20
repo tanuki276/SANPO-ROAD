@@ -62,3 +62,4 @@ fun RouteEditorDialog(route: SavedRoute, onClose: () -> Unit, onSave: suspend (S
         confirmButton = { TextButton(onClick = { confirmDelete = false; action { onDelete() } }) { Text("削除する") } },
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("キャンセル") } })
 }
+

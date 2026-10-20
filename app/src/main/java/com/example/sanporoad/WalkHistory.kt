@@ -22,3 +22,4 @@ fun filterWalkHistory(routes: List<SavedRoute>, query: String, sort: HistorySort
     }.thenByDescending { it.id }
     return matching.sortedWith(comparator)
 }
+
