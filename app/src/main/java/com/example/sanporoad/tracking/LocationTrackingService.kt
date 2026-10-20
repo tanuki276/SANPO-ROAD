@@ -55,7 +55,7 @@ class LocationTrackingService : Service() {
                     put(this@LocationTrackingService,KEY_DISTANCE,accumulator.distanceMeters)
                     put(this@LocationTrackingService, "gpsQuality", kotlinx.serialization.json.Json.encodeToString(GpsQualityReport.serializer(), accumulator.report()))
                     updateNotification()
-                } catch (_: Exception) { pauseTracking(); updateNotification() }
+                } catch (_: Exception) { distanceAccumulator = null; pauseTracking(); updateNotification() }
             }
         }
     }
@@ -78,7 +78,7 @@ class LocationTrackingService : Service() {
                     ACTION_START -> startTracking()
                     null -> if (isRecording(this@LocationTrackingService)) startTracking() else stopSelf()
                 }
-            } catch (_: Exception) { pauseTracking(); updateNotification() }
+            } catch (_: Exception) { distanceAccumulator = null; pauseTracking(); updateNotification() }
         }
         return if (intent?.action == ACTION_START || isRecording(this)) START_STICKY else START_NOT_STICKY
     }

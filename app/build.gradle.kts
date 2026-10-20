@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "com.example.sanporoad"
-    compileSdk = 35
+    compileSdk = 36
     defaultConfig {
         applicationId = providers.gradleProperty("SANPO_APPLICATION_ID").orElse("io.github.tanuki276.sanporoad").get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

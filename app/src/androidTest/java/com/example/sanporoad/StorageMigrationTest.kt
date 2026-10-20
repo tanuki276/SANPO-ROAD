@@ -58,4 +58,36 @@ class StorageMigrationTest {
         }
         context.deleteDatabase(name)
     }
+    @Test fun cr11BackupRestoresMetadataAndPhotoWithoutRecordEligibility() {
+        val store=RouteStore(context)
+        val source=File(context.filesDir,"walk_photos/test-original.png").apply { parentFile?.mkdirs() }
+        val bitmap=android.graphics.Bitmap.createBitmap(2,2,android.graphics.Bitmap.Config.ARGB_8888)
+        source.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) };bitmap.recycle()
+        val original=route.copy(photoPath=source.absolutePath,tags=listOf("犬の散歩","川"),restDurationMs=4000,
+            restIntervals=listOf(RestInterval(100,4100)),gpsQuality=GpsQualityReport(3,10,3.2f))
+        val backup=RouteBackup.encode(context,listOf(original))
+        assertEquals(1,RouteBackup.restore(context,store,backup))
+        val restored=store.getAll().single()
+        assertTrue(restored.imported);assertEquals(original.tags,restored.tags)
+        assertEquals(original.gpsQuality,restored.gpsQuality)
+        assertEquals(original.restIntervals,restored.restIntervals)
+        assertArrayEquals(source.readBytes(),File(restored.photoPath!!).readBytes())
+        assertEquals(0,RouteBackup.restore(context,store,backup))
+        store.save(restored.copy(imported=false,name="edited"))
+        assertTrue(store.getAll().single().imported)
+        assertEquals(0,WalkStats.calculate(store.getAll()).totalWalks)
+    }
+    @Test fun cr11CheckpointAndMapFixesAreCommittedTogether() {
+        context.getSharedPreferences("sanpo_tracking",0).edit().putLong("sessionId",12345).commit()
+        LiveTrackStore.load(context)
+        val accumulator=GpsDistanceAccumulator()
+        val points=(0..10).map { LatLngPoint(35.0+it/111194.9266,139.0,1000L+it*1000,3.2f) }
+        points.forEach { accumulator.add(it) }
+        LiveTrackStore.append(context,points,accumulator)
+        LiveTrackStore.load(context)
+        assertEquals(points,LiveTrackStore.points())
+        assertEquals(accumulator.report(),LiveTrackStore.accumulator(context)!!.report())
+        LiveTrackStore.clear(context)
+    }
 }
+

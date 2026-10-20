@@ -29,7 +29,8 @@ internal class GpsDistanceAccumulator {
     private var anchor: LatLngPoint? = null
     private var previous: LatLngPoint? = null
     private val window = mutableListOf<LatLngPoint>()
-    private var observation: LatLngPoint? = null
+    private var observationTimeMs: Long = 0
+    private var observationSegment: Int = -1
     private val accuracies = mutableListOf<Float>()
     private var accepted = 0
     private var excluded = 0
@@ -40,11 +41,13 @@ internal class GpsDistanceAccumulator {
 
     fun add(point: LatLngPoint, speedMps: Float? = null, config: GpsFilterConfig = GpsFilterConfig()): Boolean {
         val last = previous
-        val observed = observation
-        if (observed != null && point.timeMs <= observed.timeMs) return false
-        observation = point
+        val observed = observationTimeMs
+        if (observed > 0 && point.timeMs <= observed) return false
+        val observedSegment = observationSegment
+        observationTimeMs = point.timeMs
+        observationSegment = point.segment
         val same = last != null && point.segment == last.segment
-        val dt = if (observed != null && point.segment == observed.segment) (point.timeMs-observed.timeMs).coerceIn(0, 15_000) else 0L
+        val dt = if (observed > 0 && point.segment == observedSegment) (point.timeMs-observed).coerceIn(0, 15_000) else 0L
         observedMs += dt
         val accuracy = point.accuracyM
         if (accuracy != null && accuracy.isFinite() && accuracy > 0) accuracies += accuracy

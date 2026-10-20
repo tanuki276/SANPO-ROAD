@@ -44,10 +44,10 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: android-actions/setup-android@v3
-      - run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '8.11.1'
       - name: Build and test release
         run: gradle --no-daemon --console=plain testReleaseUnitTest assembleRelease
       - name: Verify signature and checksum
@@ -65,4 +65,5 @@ jobs:
       - name: Remove signing key
         if: always()
         run: rm -f "$SANPO_KEYSTORE_PATH"
+
 

@@ -65,4 +65,11 @@ class Cr11Test {
         try { RouteBackup.decode(RouteExport.json(listOf(original.copy(points=listOf(p(0.0,1).copy(lat=91.0)))))); fail() }
         catch(_:IllegalArgumentException) {}
     }
+    @Test fun invalidAccuracyDoesNotPoisonDurableState() {
+        val accumulator=GpsDistanceAccumulator()
+        accumulator.add(p(0.0,1000))
+        assertFalse(accumulator.add(p(0.0,2000,Float.NaN)))
+        val restored=Json.decodeFromString<GpsDistanceAccumulator>(Json.encodeToString(GpsDistanceAccumulator.serializer(),accumulator))
+        assertEquals(accumulator.report(),restored.report())
+    }
 }

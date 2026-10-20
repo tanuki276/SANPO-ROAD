@@ -133,6 +133,7 @@ fun MapRecordScreen(
     val scope = rememberCoroutineScope()
     var saving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
+    var showDetails by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var locationProblem by remember { mutableStateOf<String?>(null) }
     var followLocation by rememberSaveable { mutableStateOf(true) }
@@ -378,8 +379,10 @@ fun MapRecordScreen(
         Text(timeSummary(if (showingRecordedSession) durationMs else restoredRoute?.durationMs ?: 0,
             if (showingRecordedSession) restMs else restoredRoute?.restDurationMs ?: 0), Modifier.padding(horizontal=16.dp))
         if (!showingRecordedSession) restoredRoute?.let { saved ->
-            GpsQualityView(saved.gpsQuality)
-            HealthRoutePanel(saved)
+            TextButton(onClick={showDetails=true}) { Text("GPS品質・Health Connect") }
+            if(showDetails) AlertDialog(onDismissRequest={showDetails=false},title={Text(saved.name)},
+                text={Column(Modifier.verticalScroll(rememberScrollState())) { GpsQualityView(saved.gpsQuality); HealthRoutePanel(saved) }},
+                confirmButton={TextButton(onClick={showDetails=false}) { Text("閉じる") }})
         }
         Row(
             Modifier.fillMaxWidth().padding(16.dp),
@@ -486,6 +489,7 @@ fun MapRecordScreen(
                         distance = 0.0
                         durationMs = 0L
                         routeName = ""
+                        tags = ""
                         note = ""
                         photoUriText = null
                         showSaveDialog = false
