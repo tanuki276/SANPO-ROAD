@@ -134,6 +134,7 @@ fun MapRecordScreen(
     var confirmDiscard by remember { mutableStateOf(false) }
     var locationProblem by remember { mutableStateOf<String?>(null) }
     var followLocation by rememberSaveable { mutableStateOf(true) }
+    var hasCenteredOnCurrentLocation by remember { mutableStateOf(false) }
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* Notification denial does not prevent foreground recording. */ }
@@ -233,7 +234,15 @@ fun MapRecordScreen(
             val fix = liveFix?.takeIf { isFreshFix(SystemClock.elapsedRealtimeNanos(), it.elapsedRealtimeNanos) }
             gpsAccuracy = fix?.accuracy?.toDouble() ?: -1.0
             current = fix?.takeIf { it.accuracy <= GpsSettings(context).mode.filter.maximumAccuracyM }?.let { GeoPoint(it.latitude,it.longitude) }
-            current?.let { if (followLocation && restoredRoute == null) { mapView.controller.setZoom(16.0); mapView.controller.animateTo(it) } }
+            current?.let {
+                if (followLocation && restoredRoute == null) {
+                    if (!hasCenteredOnCurrentLocation) {
+                        mapView.controller.setZoom(18.0)
+                        hasCenteredOnCurrentLocation = true
+                    }
+                    mapView.controller.animateTo(it)
+                }
+            }
             LiveTrackStore.error?.let { saveError = it }
             if (!stateRecording && LocationTrackingService.hasPendingRecording(context)) showSaveDialog = true
             kotlinx.coroutines.delay(500L)
@@ -519,4 +528,3 @@ fun MapRecordScreen(
     }
 
 }
-
