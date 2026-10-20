@@ -68,7 +68,8 @@ object RouteBackup {
                     val options=android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds=true }
                     android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size,options)
                     require(options.outWidth in 1..20000 && options.outHeight in 1..20000) { "不正な写真です" }
-                    val file=File(File(context.filesDir,"walk_photos").apply { mkdirs() },"${restored.id}-${java.util.UUID.randomUUID()}.jpg")
+                    val extension=when(options.outMimeType) { "image/png" -> "png"; "image/webp" -> "webp"; else -> "jpg" }
+                    val file=File(File(context.filesDir,"walk_photos").apply { mkdirs() },"${restored.id}-${java.util.UUID.randomUUID()}.$extension")
                     created += file
                     file.outputStream().use { it.write(bytes); it.fd.sync() }
                     restored=restored.copy(photoPath=file.absolutePath)

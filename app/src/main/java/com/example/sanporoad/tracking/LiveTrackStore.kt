@@ -5,6 +5,8 @@ import java.io.File
 /** Session points are appended individually; preferences contain only small session metadata. */
 object LiveTrackStore {
     @Volatile private var cached: List<LatLngPoint> = emptyList()
+    @Volatile internal var quality: GpsQualityReport? = null
+        private set
     @Volatile var error: String? = null
         private set
     private fun key(context: Context) = "live:${LocationTrackingService.getSessionId(context)}"
@@ -29,6 +31,7 @@ object LiveTrackStore {
             check(prefs.edit().remove("points").commit())
         }
         cached = db.points().forWalk(key).map { LatLngPoint(it.lat,it.lng,it.timeMs,it.accuracyM,it.segment) }
+        quality = accumulator(context)?.report()
         error = null
     }
     internal fun accumulator(context: Context): GpsDistanceAccumulator? = runCatching {
@@ -44,11 +47,11 @@ object LiveTrackStore {
                 val row = checkNotNull(db.walks().find(key(context)))
                 db.walks().put(row.copy(metadata=Json.encodeToString(GpsDistanceAccumulator.serializer(),accumulator)))
             }
-            cached = cached + points; error = null
+            cached = cached + points; quality = accumulator.report(); error = null
         } catch(e: Exception) { error = "GPS記録の保存に失敗しました。空き容量を確認してください。"; throw e }
     }
     @Synchronized fun clear(context: Context) {
-        AppDatabase.get(context).walks().delete(key(context)); cached = emptyList(); error = null
+        AppDatabase.get(context).walks().delete(key(context)); cached = emptyList(); quality = null; error = null
     }
 }
 

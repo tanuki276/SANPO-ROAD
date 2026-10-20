@@ -9,7 +9,7 @@ object RoutePrivacy {
         val start=points.first(); val end=points.last()
         var segment=0; var hidden=true; var original: Int?=null
         return points.mapNotNull { p ->
-            if (RouteMatching.distance(start,p) < radiusMeters || RouteMatching.distance(end,p) < radiusMeters) {
+            if (RouteMatching.distance(start,p) <= radiusMeters || RouteMatching.distance(end,p) <= radiusMeters) {
                 hidden=true; null
             } else {
                 if (hidden || original != p.segment) segment++

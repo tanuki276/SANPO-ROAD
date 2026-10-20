@@ -21,6 +21,7 @@ import kotlinx.coroutines.CancellationException
         catch(_: Exception) { message="Health Connectを利用できません。SANPOの記録は保存されています。権限や対応状況を確認し、再試行できます。" }
         finally { busy=false }
     } }
+    LaunchedEffect(route.id) { if (manager.available() && route.durationMs > 0) refresh(false) }
     val permission=rememberLauncherForActivityResult(PermissionController.createRequestPermissionResultContract()) { refresh(!route.imported) }
     Column {
         Text("Health Connect")

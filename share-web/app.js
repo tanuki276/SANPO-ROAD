@@ -141,7 +141,7 @@ function renderMap(data) {
     fillColor: '#ffffff',
     fillOpacity: 1,
     weight: 4,
-  }).addTo(map).bindTooltip('スタート')
+  }).addTo(map).bindTooltip('表示区間の始点')
 
   if (points.length > 1) {
     L.circleMarker(end, {
@@ -150,7 +150,7 @@ function renderMap(data) {
       fillColor: '#ffffff',
       fillOpacity: 1,
       weight: 4,
-    }).addTo(map).bindTooltip('ゴール')
+    }).addTo(map).bindTooltip('表示区間の終点')
   }
 
   const bounds = line.getBounds()
@@ -216,3 +216,4 @@ async function load() {
 }
 
 load()
+

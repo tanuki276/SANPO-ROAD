@@ -294,7 +294,7 @@ class LocationTrackingService : Service() {
             return activeDuration(startedAt, end, prefs(context).getLong(KEY_PAUSED_TOTAL, 0L), prefs(context).getLong(KEY_PAUSED_AT, 0L))
         }
 
-        fun getDistanceMeters(context: Context): Double = runCatching {
+        fun getDistanceMeters(context: Context): Double = LiveTrackStore.quality?.filteredDistanceMeters ?: runCatching {
             prefs(context).getString(KEY_DISTANCE, null)?.toDouble()
                 ?: prefs(context).getFloat(KEY_DISTANCE, 0f).toDouble()
         }.getOrDefault(0.0)
@@ -306,7 +306,7 @@ class LocationTrackingService : Service() {
         fun getRestIntervals(context: Context): List<RestInterval> = runCatching {
             kotlinx.serialization.json.Json.decodeFromString<List<RestInterval>>(prefs(context).getString("restIntervals", "[]").orEmpty())
         }.getOrDefault(emptyList())
-        fun getGpsQuality(context: Context): GpsQualityReport? = runCatching {
+        fun getGpsQuality(context: Context): GpsQualityReport? = LiveTrackStore.quality ?: runCatching {
             kotlinx.serialization.json.Json.decodeFromString<GpsQualityReport>(prefs(context).getString("gpsQuality", "").orEmpty())
         }.getOrNull()
         fun getLastAccuracyMeters(context: Context): Double = runCatching {

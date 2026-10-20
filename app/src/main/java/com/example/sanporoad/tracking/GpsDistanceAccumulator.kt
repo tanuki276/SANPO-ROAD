@@ -51,7 +51,7 @@ internal class GpsDistanceAccumulator {
         observedMs += dt
         val accuracy = point.accuracyM
         if (accuracy != null && accuracy.isFinite() && accuracy > 0) accuracies += accuracy
-        if (accuracy == null || !accuracy.isFinite() || accuracy > 10f) lowMs += dt
+        if (accuracy == null || !accuracy.isFinite() || accuracy <= 0f || accuracy > 10f) lowMs += dt
         val valid = GpsTrackFilter.segmentMeters(null, point, speedMps, config) != null
         val plausible = !same || (point.timeMs-last!!.timeMs > 15_000) ||
             RouteMatching.distance(last,point) / ((point.timeMs-last.timeMs)/1000.0) <= config.maximumSpeedMps
@@ -67,7 +67,7 @@ internal class GpsDistanceAccumulator {
         while (window.size > 5) window.removeAt(0)
         val displacement = RouteMatching.distance(start,point)
         val uncertainty = max(start.accuracyM ?: accuracy!!, accuracy!!).toDouble()
-        val threshold = max(config.minimumMovementM, uncertainty * 1.25).coerceAtMost(12.0)
+        val threshold = max(config.minimumMovementM, uncertainty * 1.25)
         // Three consecutive fixes progressing in roughly one direction support genuine slow movement.
         val path = listOf(start) + window.toList()
         val length = path.zipWithNext().sumOf { RouteMatching.distance(it.first,it.second) }

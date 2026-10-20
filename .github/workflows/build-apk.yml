@@ -88,3 +88,16 @@ jobs:
             app/build/reports/androidTests/
             app/schemas/
 
+  cr11-data-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-save --package-lock=false @electric-sql/pglite@0.5.10
+      - run: node supabase/tests/cr11_metadata.test.mjs
+      - run: node --test share-web/tests/share.test.mjs

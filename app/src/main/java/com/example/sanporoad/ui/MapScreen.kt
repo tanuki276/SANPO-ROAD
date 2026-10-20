@@ -519,6 +519,7 @@ fun MapRecordScreen(
             durationMs = 0L
             gpsAccuracy = -1.0
             routeName = ""
+            tags = ""
             note = ""
             photoUriText = null
             saveError = null
