@@ -34,7 +34,11 @@ fun ShareScreen(route: SavedRoute,onClose: () -> Unit,onChanged: () -> Unit) {
             item { Button(enabled=!busy,onClick={action {
                 val url=ShareManager(context).create(route,map,note,days)
                 (context.getSystemService(ClipboardManager::class.java)).setPrimaryClip(ClipData.newPlainText("散歩の共有リンク",url))
-                completed=true;message="共有リンクをコピーしました";shares=SupabaseRouteSync.shares().filter { it.routeLocalId==route.id }
+                completed=true;message="共有リンクをコピーしました"
+                shares=emptyList()
+                try { shares=SupabaseRouteSync.shares().filter { it.routeLocalId==route.id } }
+                catch(e: CancellationException) { throw e }
+                catch(_: Exception) { message="共有リンクをコピーしました。一覧の更新は「過去の共有リンクを確認」から再試行できます。" }
             }}){Text("リンクを作成／更新・コピー")}
                 AnimatedVisibility(completed,enter=fadeIn()){Icon(Icons.Default.CheckCircle,"共有完了")}
                 message?.let{Text(it)}

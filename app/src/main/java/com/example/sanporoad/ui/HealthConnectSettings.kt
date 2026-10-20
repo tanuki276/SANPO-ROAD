@@ -30,6 +30,7 @@ import kotlinx.coroutines.CancellationException
             try {
                 status = manager.status()
                 granted = manager.grantedPermissions()
+                message = null
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) { granted = emptySet(); message = "連携状態を取得できませんでした。再試行してください。" }
         }
