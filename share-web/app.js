@@ -159,6 +159,8 @@ function renderMap(data) {
   } else {
     map.setView(start, 17)
   }
+
+  requestAnimationFrame(() => map.invalidateSize({ pan: false }))
 }
 
 function render(data) {
@@ -177,8 +179,9 @@ function render(data) {
     noteCard.hidden = true
   }
 
-  renderMap(data)
+  // Leaflet must measure a visible container. Reveal the page first, then build the map.
   showState('content')
+  requestAnimationFrame(() => renderMap(data))
 }
 
 function tokenFromPath() {
