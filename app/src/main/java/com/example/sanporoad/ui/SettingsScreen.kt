@@ -136,7 +136,7 @@ fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncS
                         message = "Googleでログインしてください。完了するとアプリに戻ります。"
                     } }) { Text("Googleでログイン") }
                 } else {
-                    Text(preferences.accountEmail ?: "Googleでログイン済み")
+                    Text("Googleでログイン済み")
                     Text("ログアウトすると、このアカウントの端末内記録は非表示になります。再ログインすると表示されます。")
                     OutlinedButton(enabled = !busy && !recording, onClick = { confirmation = "logout" }) { Text("ログアウト") }
                     TextButton(enabled = !busy && !recording, onClick = { confirmation = "account" }) { Text("アカウントを削除", color = MaterialTheme.colorScheme.error) }
