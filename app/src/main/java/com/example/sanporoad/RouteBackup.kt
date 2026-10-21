@@ -41,6 +41,7 @@ object RouteBackup {
         require(backup.routes.map { it.id }.distinct().size == backup.routes.size) { "記録IDが重複しています" }
         backup.routes.forEach { r ->
             require(r.id > 0 && r.startedAt > 0 && r.formatVersion <= 2 && r.durationMs in 0..604800000L && r.restDurationMs in 0..604800000L && r.distanceMeters.isFinite() && r.distanceMeters in 0.0..1000000.0) { "不正な記録です" }
+            require(r.distanceGoalMeters == null || (r.distanceGoalMeters.isFinite() && r.distanceGoalMeters > 0 && r.distanceGoalMeters <= 1000000)) { "不正な距離目標です" }
             require(r.name.length <= 1000 && r.note.length <= 10000 && r.tags.size <= 20 && r.tags.all { it.length <= 30 })
             require(r.points.all { it.lat.isFinite() && it.lng.isFinite() && it.lat in -90.0..90.0 && it.lng in -180.0..180.0 && it.timeMs >= 0 && (it.accuracyM == null || it.accuracyM.isFinite() && it.accuracyM > 0) }) { "不正なGPS座標です" }
         }

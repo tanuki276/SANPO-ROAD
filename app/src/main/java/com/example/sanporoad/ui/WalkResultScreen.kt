@@ -91,7 +91,7 @@ internal fun WalkResultDialog(
                 Text(route.tags.joinToString(" / "))
                 if (route.imported) Text("インポート記録・自己記録の対象外")
                 GpsQualityView(route.gpsQuality)
-                HealthRoutePanel(route)
+                distanceGoalSummary(route.distanceGoalMeters, route.distanceMeters)?.let { Text(it) }
                 Text("平均ペース ${paceText(route.distanceMeters, route.durationMs)}")
                 comparison?.let {
                     HorizontalDivider()
