@@ -49,7 +49,7 @@ jobs:
           path: app/build/reports/tests/
 
   release-apk:
-    if: github.event_name != 'pull_request'
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     environment: release
     timeout-minutes: 15
