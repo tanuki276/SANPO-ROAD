@@ -142,6 +142,9 @@ fun MapRecordScreen(
         ActivityResultContracts.RequestPermission()
     ) { /* Notification denial does not prevent foreground recording. */ }
 
+    var showGoalDialog by rememberSaveable { mutableStateOf(false) }
+    var goalInput by rememberSaveable { mutableStateOf("3.0") }
+    var selectedGoal by rememberSaveable { mutableStateOf<Double?>(null) }
     fun beginRecording() {
         val manager = context.getSystemService(LocationManager::class.java)
         if (!androidx.core.location.LocationManagerCompat.isLocationEnabled(manager)) {
@@ -151,7 +154,7 @@ fun MapRecordScreen(
         try {
             onClearRestoredRoute()
             followLocation = true
-            LocationTrackingService.start(context, guideRoute?.id)
+            LocationTrackingService.start(context, guideRoute?.id, selectedGoal)
             if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(
                     context, Manifest.permission.POST_NOTIFICATIONS
                 ) != PackageManager.PERMISSION_GRANTED) {
@@ -173,7 +176,8 @@ fun MapRecordScreen(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { perms ->
         if (perms[Manifest.permission.ACCESS_FINE_LOCATION] == true) {
-            beginRecording()
+            if (WalkPreferences(context).useWalkGoal) showGoalDialog = true
+            else { selectedGoal = null; beginRecording() }
         } else {
             locationProblem = "散歩の道筋を記録するには「正確な位置情報」の許可が必要です。アプリの設定で許可してください。"
         }
@@ -326,6 +330,22 @@ fun MapRecordScreen(
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
+            Surface(
+                modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 32.dp),
+                shape = MaterialTheme.shapes.small,
+                color = Color(0xFF182B3A), contentColor = Color.White, shadowElevation = 3.dp
+            ) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(if (gpsAccuracy <= 0) Icons.Default.GpsNotFixed else Icons.Default.GpsFixed, null, Modifier.size(20.dp))
+                    Text(when {
+                        paused -> "一時停止中"
+                        gpsAccuracy <= 0 -> "GPS探索中"
+                        gpsAccuracy <= 10 -> "GPS良好 ±${gpsAccuracy.roundToInt()}m"
+                        gpsAccuracy <= 20 -> "GPS普通 ±${gpsAccuracy.roundToInt()}m"
+                        else -> "GPS不安定 ±${gpsAccuracy.roundToInt()}m"
+                    }, Modifier.padding(start = 8.dp), style = MaterialTheme.typography.labelLarge)
+                }
+            }
             if (recording) {
                 FilledTonalButton(
                     onClick = { followLocation = !followLocation },
@@ -338,29 +358,7 @@ fun MapRecordScreen(
             }
         }
 
-        run {
-            val gpsText = when {
-                paused -> "一時停止中・時間と距離の計測を止めています"
-                gpsAccuracy <= 0 -> "GPS探索中"
-                gpsAccuracy <= 10 -> "GPS良好 ±${gpsAccuracy.roundToInt()}m"
-                gpsAccuracy <= 20 -> "GPS普通 ±${gpsAccuracy.roundToInt()}m"
-                else -> "GPS不安定 ±${gpsAccuracy.roundToInt()}m"
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp)) {
-                val pulse = rememberInfiniteTransition(label = "gps")
-                val opacity by pulse.animateFloat(0.45f, 1f, infiniteRepeatable(tween(1000), RepeatMode.Reverse), label = "gpsOpacity")
-                Icon(if (gpsAccuracy < 0) Icons.Default.GpsNotFixed else if (gpsAccuracy > 25) Icons.Default.WarningAmber else Icons.Default.GpsFixed,
-                    contentDescription = null, modifier = Modifier.size(24.dp).alpha(if (gpsAccuracy < 0) opacity else 1f))
-                Text(gpsText, Modifier.padding(start = 8.dp), style = MaterialTheme.typography.labelMedium)
-                if (gpsMode == GpsMode.HIGH_ACCURACY) { Icon(Icons.Default.GpsFixed, null, Modifier.size(20.dp)); Text("高精度モード", style = MaterialTheme.typography.labelSmall) }
-            }
-            saveError?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error) }
-            /*Text(
-                gpsText,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                style = MaterialTheme.typography.labelMedium
-            )*/
-        }
+        saveError?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error) }
 
         if (poly.isNotEmpty() || recording || pending) {
             val shownDistance = if (showingRecordedSession) distance else restoredRoute?.distanceMeters ?: 0.0
@@ -379,9 +377,9 @@ fun MapRecordScreen(
         Text(timeSummary(if (showingRecordedSession) durationMs else restoredRoute?.durationMs ?: 0,
             if (showingRecordedSession) restMs else restoredRoute?.restDurationMs ?: 0), Modifier.padding(horizontal=16.dp))
         if (!showingRecordedSession) restoredRoute?.let { saved ->
-            TextButton(onClick={showDetails=true}) { Text("GPS品質・Health Connect") }
+            TextButton(onClick={showDetails=true}) { Text("記録の詳細") }
             if(showDetails) AlertDialog(onDismissRequest={showDetails=false},title={Text(saved.name)},
-                text={Column(Modifier.verticalScroll(rememberScrollState())) { GpsQualityView(saved.gpsQuality); HealthRoutePanel(saved) }},
+                text={Column(Modifier.verticalScroll(rememberScrollState())) { GpsQualityView(saved.gpsQuality); distanceGoalSummary(saved.distanceGoalMeters, saved.distanceMeters)?.let { Text(it) }; HealthRoutePanel(saved) }},
                 confirmButton={TextButton(onClick={showDetails=false}) { Text("閉じる") }})
         }
         Row(
@@ -395,7 +393,8 @@ fun MapRecordScreen(
                     } else if (!pending) {
                         val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
                         if (fine) {
-                            beginRecording()
+                            if (WalkPreferences(context).useWalkGoal) showGoalDialog = true
+                            else { selectedGoal = null; beginRecording() }
                         } else {
                             permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
                         }
@@ -412,6 +411,19 @@ fun MapRecordScreen(
             ) { Text(if (recording) { if (paused) "再開" else "一時停止" } else "記録を見る") }
         }
     }
+
+    if (showGoalDialog) AlertDialog(
+        onDismissRequest = { showGoalDialog = false },
+        title = { Text("この散歩の距離目標") },
+        text = { OutlinedTextField(goalInput, { goalInput = it }, label = { Text("距離（km）例：3.0") },
+            singleLine = true, isError = parseDistanceGoal(goalInput) == null,
+            supportingText = { Text("0より大きく1000km以下で入力してください") },
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal)) },
+        confirmButton = { TextButton(enabled = parseDistanceGoal(goalInput) != null, onClick = {
+            selectedGoal = parseDistanceGoal(goalInput); showGoalDialog = false; beginRecording()
+        }) { Text("散歩を開始") } },
+        dismissButton = { TextButton(onClick = { showGoalDialog = false }) { Text("キャンセル") } }
+    )
 
     if (showSaveDialog && pending) AlertDialog(
         onDismissRequest = { },
@@ -482,7 +494,8 @@ fun MapRecordScreen(
                             restDurationMs = LocationTrackingService.getRestDurationMs(context),
                             tags = parseWalkTags(tags),
                             gpsQuality = LocationTrackingService.getGpsQuality(context),
-                            restIntervals = LocationTrackingService.getRestIntervals(context)
+                            restIntervals = LocationTrackingService.getRestIntervals(context),
+                            distanceGoalMeters = LocationTrackingService.getDistanceGoalMeters(context)
                         ))
                         withContext(Dispatchers.IO) { LocationTrackingService.clearPending(context) }
                         points = emptyList()

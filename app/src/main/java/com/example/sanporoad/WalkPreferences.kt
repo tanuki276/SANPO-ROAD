@@ -11,6 +11,10 @@ class WalkPreferences(context: Context) {
             prefs.edit().putString(KEY_WEEKLY_GOAL, value.coerceIn(500.0, 100_000.0).toString()).apply()
         }
 
+    var useWalkGoal: Boolean
+        get() = prefs.getBoolean("useWalkGoal", false)
+        set(value) { prefs.edit().putBoolean("useWalkGoal", value).apply() }
+
     var cloudSync: Boolean
         get() = prefs.getBoolean("cloudSync", false)
         set(value) { prefs.edit().putBoolean("cloudSync", value).commit() }

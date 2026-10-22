@@ -41,7 +41,8 @@ data class SavedRoute(
     val imported: Boolean = false,
     val importKey: String? = null,
     val gpsQuality: GpsQualityReport? = null,
-    val restIntervals: List<RestInterval> = emptyList()
+    val restIntervals: List<RestInterval> = emptyList(),
+    val distanceGoalMeters: Double? = null
 )
 
 

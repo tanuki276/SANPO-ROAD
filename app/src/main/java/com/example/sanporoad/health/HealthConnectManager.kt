@@ -44,7 +44,7 @@ internal class HealthConnectManager(private val context: Context) {
     }
     suspend fun writeAfterSave(route: SavedRoute): String = try { write(route) }
         catch(e: CancellationException) { throw e }
-        catch(_: Exception) { "SANPO保存済み・Health Connect未送信（記録画面で再試行できます）" }
+        catch(_: Exception) { "SANPO保存済み・Health Connect未送信（設定画面で権限を確認できます）" }
     suspend fun read(route: SavedRoute): HealthSummary {
         val client=client(); val granted=client.permissionController.getGrantedPermissions()
         val range=TimeRangeFilter.between(Instant.ofEpochMilli(route.startedAt), Instant.ofEpochMilli(route.startedAt).plusMillis(route.durationMs+route.restDurationMs))

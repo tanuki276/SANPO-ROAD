@@ -84,7 +84,7 @@ object SupabaseRouteSync {
         check(route.ownerId == user)
         var photo = route.photoObjectPath?.takeIf { it.startsWith("$user/") }
         if (route.deletedAt != null) {
-            client.postgrest.rpc("upsert_sanpo_route_v3", buildJsonObject {
+            client.postgrest.rpc("upsert_sanpo_route_v4", buildJsonObject {
                 put("p_route", json.encodeToJsonElement(RemoteRoute.serializer(), RemoteRoute.from(route, user, null)))
             })
         }
@@ -98,7 +98,7 @@ object SupabaseRouteSync {
             }
         }
         val payload = RemoteRoute.from(route, user, photo).copy(photoHash = if (syncPhotos && route.deletedAt == null && !route.photoRemoved && route.photoPath != null) route.photoHash else route.syncedPhotoHash)
-        client.postgrest.rpc("upsert_sanpo_route_v3", buildJsonObject {
+        client.postgrest.rpc("upsert_sanpo_route_v4", buildJsonObject {
             put("p_route", json.encodeToJsonElement(RemoteRoute.serializer(), payload))
         })
         photo
@@ -214,15 +214,16 @@ private data class RemoteRoute(
     val imported: Boolean = false,
     @SerialName("import_key") val importKey: String? = null,
     @SerialName("gps_quality") val gpsQuality: GpsQualityReport? = null,
-    @SerialName("rest_intervals") val restIntervals: List<RestInterval> = emptyList()
+    @SerialName("rest_intervals") val restIntervals: List<RestInterval> = emptyList(),
+    @SerialName("distance_goal_meters") val distanceGoalMeters: Double? = null
 ) {
     fun toLocal() = SavedRoute(localId, name, Instant.parse(startedAt).toEpochMilli(), durationMs,
-        distanceMeters, points, note, null, photoObjectPath, userId, updatedAt, deletedAt, favorite, syncState = "SYNCED", photoHash = photoHash, syncedPhotoHash = photoHash, sourceRouteId = sourceRouteId, restDurationMs = restDurationMs, tags=tags, imported=imported, importKey=importKey, gpsQuality=gpsQuality, restIntervals=restIntervals)
+        distanceMeters, points, note, null, photoObjectPath, userId, updatedAt, deletedAt, favorite, syncState = "SYNCED", photoHash = photoHash, syncedPhotoHash = photoHash, sourceRouteId = sourceRouteId, restDurationMs = restDurationMs, tags=tags, imported=imported, importKey=importKey, gpsQuality=gpsQuality, restIntervals=restIntervals, distanceGoalMeters=distanceGoalMeters)
     companion object {
         fun from(route: SavedRoute, user: String, photo: String?) = RemoteRoute(user, route.id,
             route.name, Instant.ofEpochMilli(route.startedAt).toString(), route.durationMs,
             route.distanceMeters, route.points, route.note, photo, route.updatedAt, route.deletedAt, route.favorite,
-            if (photo != null) (if (photo == route.photoObjectPath) route.syncedPhotoHash else route.photoHash) else null, route.sourceRouteId, route.restDurationMs, route.tags, route.imported, route.importKey, route.gpsQuality, route.restIntervals)
+            if (photo != null) (if (photo == route.photoObjectPath) route.syncedPhotoHash else route.photoHash) else null, route.sourceRouteId, route.restDurationMs, route.tags, route.imported, route.importKey, route.gpsQuality, route.restIntervals, route.distanceGoalMeters)
     }
 }
 

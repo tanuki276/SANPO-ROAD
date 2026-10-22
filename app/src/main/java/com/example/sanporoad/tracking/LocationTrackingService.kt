@@ -267,9 +267,10 @@ class LocationTrackingService : Service() {
             context.startService(Intent(context, LocationTrackingService::class.java).setAction(if (isPaused(context)) ACTION_RESUME else ACTION_PAUSE))
         }
 
-        fun start(context: Context, sourceRouteId: Long? = null) {
+        fun start(context: Context, sourceRouteId: Long? = null, distanceGoalMeters: Double? = null) {
             if (isRecording(context) || hasPendingRecording(context)) return
             put(context, KEY_SOURCE, sourceRouteId ?: 0L)
+            put(context, "distanceGoalMeters", distanceGoalMeters ?: 0.0)
             val intent = Intent(context, LocationTrackingService::class.java).setAction(ACTION_START)
             androidx.core.content.ContextCompat.startForegroundService(context, intent)
         }
@@ -299,6 +300,8 @@ class LocationTrackingService : Service() {
                 ?: prefs(context).getFloat(KEY_DISTANCE, 0f).toDouble()
         }.getOrDefault(0.0)
 
+        fun getDistanceGoalMeters(context: Context): Double? = prefs(context).getString("distanceGoalMeters", null)?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
+
         fun getSourceRouteId(context: Context) = prefs(context).getLong(KEY_SOURCE, 0).takeIf { it > 0 }
         fun getRestDurationMs(context: Context): Long = prefs(context).getLong(KEY_PAUSED_TOTAL, 0) +
             prefs(context).getLong(KEY_PAUSED_AT, 0).takeIf { it > 0 }?.let { (System.currentTimeMillis()-it).coerceAtLeast(0) }.orEmptyDuration()
@@ -323,6 +326,7 @@ class LocationTrackingService : Service() {
                 .putBoolean(KEY_RECORDING, false)
                 .remove(KEY_SESSION_ID)
                 .remove(KEY_SOURCE)
+                .remove("distanceGoalMeters")
                 .remove(KEY_FIX_ELAPSED)
                 .remove(KEY_RESUMED_AT)
                 .remove(KEY_PAUSED_AT)

@@ -100,4 +100,5 @@ jobs:
           node-version: '22'
       - run: npm install --no-save --package-lock=false @electric-sql/pglite@0.5.10
       - run: node supabase/tests/cr11_metadata.test.mjs
+      - run: node supabase/tests/cr11_followup.test.mjs
       - run: node --test share-web/tests/share.test.mjs

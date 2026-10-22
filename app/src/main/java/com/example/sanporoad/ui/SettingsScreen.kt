@@ -20,6 +20,11 @@ import kotlinx.coroutines.withContext
 @Composable
 fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncStatus: String, onChanged: () -> Unit, onSync: () -> Unit) {
     val context = LocalContext.current
+    val health = remember { HealthConnectManager(context) }
+    val healthPermission = rememberLauncherForActivityResult(
+        androidx.health.connect.client.PermissionController.createRequestPermissionResultContract()
+    ) { }
+
     val scope = rememberCoroutineScope()
     var legal by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -79,6 +84,25 @@ fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncS
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         }
         item {
+            SettingsCard("散歩目標") {
+                var enabled by remember { mutableStateOf(preferences.useWalkGoal) }
+                SettingSwitch("散歩目標を使用", "散歩を始めるときに距離目標を入力します。", enabled, true) {
+                    preferences.useWalkGoal = it; enabled = it
+                }
+            }
+        }
+        item {
+            SettingsCard("Health Connect（任意）") {
+                Text("連携すると、保存済みの散歩の詳細で歩数・消費カロリー・平均心拍数を確認できます。")
+                if (health.available()) {
+                    Button(onClick = { healthPermission.launch(HealthConnectManager.permissions) }) { Text("連携・権限を設定") }
+                    OutlinedButton(onClick = {
+                        context.startActivity(androidx.health.connect.client.HealthConnectClient.getHealthConnectManageDataIntent(context))
+                    }) { Text("Health Connectを開く") }
+                } else Text("Health Connectのインストール・更新が必要です。")
+            }
+        }
+        item {
             SettingsCard("GPS設定") {
                 val gps = remember { GpsSettings(context) }
                 var high by remember { mutableStateOf(gps.mode == GpsMode.HIGH_ACCURACY) }
@@ -112,7 +136,7 @@ fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncS
                         message = "Googleでログインしてください。完了するとアプリに戻ります。"
                     } }) { Text("Googleでログイン") }
                 } else {
-                    Text(preferences.accountEmail ?: "Googleでログイン済み")
+                    Text("Googleでログイン済み")
                     Text("ログアウトすると、このアカウントの端末内記録は非表示になります。再ログインすると表示されます。")
                     OutlinedButton(enabled = !busy && !recording, onClick = { confirmation = "logout" }) { Text("ログアウト") }
                     TextButton(enabled = !busy && !recording, onClick = { confirmation = "account" }) { Text("アカウントを削除", color = MaterialTheme.colorScheme.error) }
