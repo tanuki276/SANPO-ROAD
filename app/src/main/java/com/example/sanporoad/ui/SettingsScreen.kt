@@ -41,7 +41,7 @@ fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncS
         busy = true; message = null
         scope.launch {
             try { block() } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { message = e.message ?: "操作できませんでした。通信状態を確認してください。" }
+            catch (e: Exception) { message = "操作できませんでした。ログイン状態・通信状態・選択したファイルを確認してください。" }
             finally { busy = false; refresh++; onChanged() }
         }
     }
@@ -84,10 +84,11 @@ fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncS
                 var high by remember { mutableStateOf(gps.mode == GpsMode.HIGH_ACCURACY) }
                 SettingSwitch("高精度GPSモード", "位置更新を多く要求します。電池消費が増えます。端末や環境によって精度は変わり、改善を保証するものではありません。散歩中も変更できます。", high, true) {
                     try { gps.mode = if(it) GpsMode.HIGH_ACCURACY else GpsMode.NORMAL; high = it }
-                    catch (e: Exception) { message = e.message }
+                    catch (e: Exception) { message = "GPS設定を変更できませんでした。再試行してください。" }
                 }
             }
         }
+        item { SettingsCard("ヘルスコネクト連携") { HealthConnectSettings() } }
         item {
             SettingsCard("保存と送信") {
                 Text(syncStatus)
@@ -112,7 +113,7 @@ fun PrivacySettingsScreen(store: RouteStore, preferences: WalkPreferences, syncS
                         message = "Googleでログインしてください。完了するとアプリに戻ります。"
                     } }) { Text("Googleでログイン") }
                 } else {
-                    Text(preferences.accountEmail ?: "Googleでログイン済み")
+                    Text(maskAccountEmail(preferences.accountEmail))
                     Text("ログアウトすると、このアカウントの端末内記録は非表示になります。再ログインすると表示されます。")
                     OutlinedButton(enabled = !busy && !recording, onClick = { confirmation = "logout" }) { Text("ログアウト") }
                     TextButton(enabled = !busy && !recording, onClick = { confirmation = "account" }) { Text("アカウントを削除", color = MaterialTheme.colorScheme.error) }
@@ -239,4 +240,5 @@ private fun SettingSwitch(label: String, description: String, checked: Boolean, 
         Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
     }
 }
+
 

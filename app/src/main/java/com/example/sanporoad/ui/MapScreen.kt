@@ -376,12 +376,17 @@ fun MapRecordScreen(
             }
         }
 
+        if (showingRecordedSession && startedAt > 0) {
+            HealthRoutePanel(SavedRoute(startedAt, "散歩中", startedAt, durationMs, distance, emptyList(), restDurationMs = restMs),
+                live = recording, modifier = Modifier.padding(horizontal = 16.dp))
+        } else restoredRoute?.let { HealthRoutePanel(it, modifier = Modifier.padding(horizontal = 16.dp)) }
+
         Text(timeSummary(if (showingRecordedSession) durationMs else restoredRoute?.durationMs ?: 0,
             if (showingRecordedSession) restMs else restoredRoute?.restDurationMs ?: 0), Modifier.padding(horizontal=16.dp))
         if (!showingRecordedSession) restoredRoute?.let { saved ->
             TextButton(onClick={showDetails=true}) { Text("GPS品質・Health Connect") }
             if(showDetails) AlertDialog(onDismissRequest={showDetails=false},title={Text(saved.name)},
-                text={Column(Modifier.verticalScroll(rememberScrollState())) { GpsQualityView(saved.gpsQuality); HealthRoutePanel(saved) }},
+                text={Column(Modifier.verticalScroll(rememberScrollState())) { GpsQualityView(saved.gpsQuality); HealthWriteRetry(saved) }},
                 confirmButton={TextButton(onClick={showDetails=false}) { Text("閉じる") }})
         }
         Row(
@@ -547,4 +552,5 @@ fun MapRecordScreen(
     }
 
 }
+
 

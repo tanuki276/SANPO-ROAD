@@ -1,0 +1,48 @@
+import { PGlite } from '@electric-sql/pglite';
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+const db = new PGlite();
+await db.exec(`
+CREATE SCHEMA auth;
+CREATE ROLE anon; CREATE ROLE authenticated;
+CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$ SELECT current_setting('test.uid')::uuid $$;
+CREATE FUNCTION public.sanpo_session_active_v1() RETURNS boolean LANGUAGE sql AS $$ SELECT current_setting('test.active')::boolean $$;
+CREATE TABLE public.sanpo_shares(token text PRIMARY KEY,owner_id uuid,route_local_id bigint,name text,show_map boolean,points jsonb,note text,expires_at timestamptz,UNIQUE(owner_id,route_local_id));
+ALTER TABLE public.sanpo_shares ENABLE ROW LEVEL SECURITY;
+CREATE POLICY own ON public.sanpo_shares TO authenticated USING(owner_id=auth.uid()) WITH CHECK(owner_id=auth.uid());
+GRANT USAGE ON SCHEMA auth TO authenticated;
+GRANT SELECT,INSERT,UPDATE,DELETE ON public.sanpo_shares TO authenticated;
+CREATE FUNCTION public.create_sanpo_share_v1(p_route_local_id bigint,p_name text,p_started_at timestamptz,p_duration_ms bigint,p_distance_meters double precision,p_points jsonb,p_note text,p_share_map boolean)
+RETURNS text LANGUAGE plpgsql AS $$ DECLARE t text := gen_random_uuid()::text; BEGIN
+ IF p_name = 'fail' THEN RAISE EXCEPTION 'simulated failure'; END IF;
+ INSERT INTO public.sanpo_shares VALUES(t,auth.uid(),p_route_local_id,p_name,p_share_map,CASE WHEN p_share_map THEN p_points ELSE '[]'::jsonb END,p_note,null);
+ RETURN t;
+END $$;
+SET ROLE authenticated;
+SELECT set_config('test.uid','00000000-0000-0000-0000-000000000001',false);
+SELECT set_config('test.active','true',false);
+`);
+const call = (name, map = false, expiry = null) => db.query(`SELECT public.create_sanpo_share_v2(1,$1,now(),1000,100,'[{"lat":1,"lng":2}]'::jsonb,'note',$2,$3::timestamptz) AS token`, [name,map,expiry]);
+await db.exec('RESET ROLE');
+await db.exec(fs.readFileSync(new URL('../migrations/20261020184240_fix_repeat_share.sql',import.meta.url),'utf8'));
+await db.exec('SET ROLE authenticated');
+const first = (await call('first',true)).rows[0].token;
+const second = (await call('second',false,new Date(Date.now()+86400000).toISOString())).rows[0].token;
+assert.notEqual(first,second);
+let rows = (await db.query('SELECT * FROM public.sanpo_shares')).rows;
+assert.equal(rows.length,1); assert.equal(rows[0].name,'second'); assert.deepEqual(rows[0].points,[]); assert.ok(rows[0].expires_at);
+await assert.rejects(call('fail'));
+assert.equal((await db.query('SELECT token FROM public.sanpo_shares')).rows[0].token,second);
+await assert.rejects(call('bad expiry',false,'2000-01-01'));
+assert.equal((await db.query('SELECT token FROM public.sanpo_shares')).rows[0].token,second);
+await db.exec("SELECT set_config('test.uid','00000000-0000-0000-0000-000000000002',false)");
+await call('other account');
+await db.exec("SELECT set_config('test.uid','00000000-0000-0000-0000-000000000001',false)");
+assert.equal((await db.query('SELECT token FROM public.sanpo_shares')).rows[0].token,second);
+await db.exec("SELECT set_config('test.active','false',false)");
+await assert.rejects(call('revoked'));
+assert.equal((await db.query('SELECT token FROM public.sanpo_shares')).rows[0].token,second);
+await db.exec('RESET ROLE');
+assert.equal((await db.query("SELECT has_function_privilege('anon','public.create_sanpo_share_v2(bigint,text,timestamptz,bigint,double precision,jsonb,text,boolean,timestamptz)','EXECUTE') AS allowed")).rows[0].allowed,false);
+console.log('PASS: repeat share rotation, map removal, expiry, rollback, account isolation, inactive session and anonymous denial');
+await db.close();

@@ -23,19 +23,23 @@ fun ShareScreen(route: SavedRoute,onClose: () -> Unit,onChanged: () -> Unit) {
     var days by remember { mutableStateOf<Int?>(7) };var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) };var shares by remember { mutableStateOf<List<ManagedShare>>(emptyList()) }
     var completed by remember { mutableStateOf(false) }
-    fun action(block: suspend () -> Unit) { busy=true;scope.launch {
-        try { block();onChanged() } catch(e: CancellationException){throw e} catch(e:Exception){message=e.message ?: "操作できませんでした"} finally {busy=false}
+    fun action(block: suspend () -> Unit) { if (busy) return; busy=true;message=null;completed=false;scope.launch {
+        try { block();onChanged() } catch(e: CancellationException){throw e} catch(e:Exception){message="共有を更新できませんでした。ログイン状態と通信状態を確認し、時間をおいて再試行してください。"} finally {busy=false}
     } }
     AlertDialog(onDismissRequest={if(!busy)onClose()}, title={Text("散歩を共有")},text={
         LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)) {
-            item { Text(route.name);Text("リンクを知っている人が閲覧できます。写真は公開されません。短い散歩は地図が全て隠れる場合があります。既存リンクは作り直してください。") }
-            item { Row { Checkbox(map,{map=it});Text("地図を含める（始終点の半径150mを隠す）") };Row {Checkbox(note,{note=it});Text("メモを含める") } }
-            item { Text("有効期限");Row { listOf(1,7,30,null).forEach { value -> TextButton(onClick={days=value}) { Text((if(days==value) "選択：" else "")+(value?.let { "${it}日" } ?: "無期限")) } } } }
+            item { Text(route.name);Text("リンクを知っている人が閲覧できます。写真は公開されません。短い散歩は地図が全て隠れる場合があります。再作成すると以前のリンクは無効になります。") }
+            item { Row { Checkbox(map,{map=it},enabled=!busy);Text("地図を含める（始終点の半径150mを隠す）") };Row {Checkbox(note,{note=it},enabled=!busy);Text("メモを含める") } }
+            item { Text("有効期限");Row { listOf(1,7,30,null).forEach { value -> TextButton(enabled=!busy,onClick={days=value}) { Text((if(days==value) "選択：" else "")+(value?.let { "${it}日" } ?: "無期限")) } } } }
             item { Button(enabled=!busy,onClick={action {
                 val url=ShareManager(context).create(route,map,note,days)
                 (context.getSystemService(ClipboardManager::class.java)).setPrimaryClip(ClipData.newPlainText("散歩の共有リンク",url))
-                completed=true;message="共有リンクをコピーしました";shares=SupabaseRouteSync.shares().filter { it.routeLocalId==route.id }
-            }}){Text("リンクを作成・コピー")}
+                completed=true;message="共有リンクをコピーしました"
+                shares=emptyList()
+                try { shares=SupabaseRouteSync.shares().filter { it.routeLocalId==route.id } }
+                catch(e: CancellationException) { throw e }
+                catch(_: Exception) { message="共有リンクをコピーしました。一覧の更新は「過去の共有リンクを確認」から再試行できます。" }
+            }}){Text("リンクを作成／更新・コピー")}
                 AnimatedVisibility(completed,enter=fadeIn()){Icon(Icons.Default.CheckCircle,"共有完了")}
                 message?.let{Text(it)}
                 OutlinedButton(enabled=!busy,onClick={action {shares=SupabaseRouteSync.shares().filter {it.routeLocalId==route.id}; message=if(shares.isEmpty()) "共有リンクはありません" else "${shares.size}件の共有リンク" }}){Text("過去の共有リンクを確認")}
@@ -48,4 +52,5 @@ fun ShareScreen(route: SavedRoute,onClose: () -> Unit,onChanged: () -> Unit) {
         }
     },confirmButton={TextButton(enabled=!busy,onClick=onClose){Text("閉じる")}})
 }
+
 

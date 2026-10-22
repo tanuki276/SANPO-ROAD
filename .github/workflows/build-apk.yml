@@ -69,6 +69,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+      - name: Free disk space for emulator
+        run: |
+          # This Kotlin-only project does not use the runner's preinstalled NDKs.
+          : "${ANDROID_HOME:?Android SDK path must be set}"
+          sudo rm -rf "${ANDROID_HOME}/ndk"
+          df -h "$HOME"
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -100,4 +106,6 @@ jobs:
           node-version: '22'
       - run: npm install --no-save --package-lock=false @electric-sql/pglite@0.5.10
       - run: node supabase/tests/cr11_metadata.test.mjs
+      - run: node supabase/tests/repeat_share.test.mjs
       - run: node --test share-web/tests/share.test.mjs
+
